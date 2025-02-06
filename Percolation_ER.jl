@@ -13,36 +13,32 @@
 # To run:
 #   julia er_percolation.jl
 ###############################################################################
-using Distributed
-@everywhere using Random
-@everywhere using Statistics
-@everywhere using Plots
-@everywhere using Colors
-@everywhere using ProgressMeter
-@everywhere using BenchmarkTools
-@everywhere using Distributed
-addprocs(20)  # or however many processes you need
-@everywhere using SharedArrays
+
+using Random
+using Statistics
+using Plots
+using Colors
+using ProgressMeter
+using BenchmarkTools
 # using LsqFit
 
 # -----------------------------
 # Union-Find Data Structure
 # -----------------------------
-
-@everywhere mutable struct UnionFind
+mutable struct UnionFind
     parent::Vector{Int}
     rank::Vector{Int}
 end
 
 # Constructor: initialize each node as its own parent; ranks start at zero.
-@everywhere function UnionFind(n::Int)
+function UnionFind(n::Int)
     parent = collect(1:n)    # Julia uses 1-indexing.
     rank = zeros(Int, n)
     return UnionFind(parent, rank)
 end
 
 # Find with path compression.
-@everywhere function uf_find(uf::UnionFind, x::Int)
+function uf_find(uf::UnionFind, x::Int)
     if uf.parent[x] != x
         uf.parent[x] = uf_find(uf, uf.parent[x])
     end
@@ -50,7 +46,7 @@ end
 end
 
 # Union by rank.
-@everywhere function uf_union(uf::UnionFind, x::Int, y::Int)
+function uf_union(uf::UnionFind, x::Int, y::Int)
     root_x = uf_find(uf, x)
     root_y = uf_find(uf, y)
     if root_x != root_y
@@ -79,7 +75,6 @@ Data is recorded in a window around `m = N/2` with relative half-width
 - chi_average: the averaged susceptibility of the reduced clusters,
 - GCC_fraction: the fraction of nodes in the giant connected component.
 """
-
 function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_fraction::Float64=0.01, max_points::Int=1000)
     # Compute window parameters.
     n = max(1, floor(Int, window_fraction * N))
@@ -91,11 +86,11 @@ function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_
     p_values = range((N / 2 - n) / N, stop=(N / 2 + n) / N, length=num_window_points)
 
     # Allocate arrays to store the largest cluster sizes and susceptibility values.
-    s_max_values = SharedArray{Float64}((trials, num_window_points))
-    chi_values = SharedArray{Float64}((trials, num_window_points))
+    s_max_values = zeros(Float64, trials, num_window_points)
+    chi_values = zeros(Float64, trials, num_window_points)
 
-    # Function to perform a single trial
-    function perform_trial(t)
+    # Loop over trials.
+    for t in 1:trials
         # Create a shuffled list of all possible edges.
         edges = [(i, j) for i in 1:N for j in (i+1):N]
         shuffle!(edges)
@@ -143,11 +138,6 @@ function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_
         end
     end
 
-    # Run trials in parallel
-    @distributed for t in 1:trials
-        perform_trial(t)
-    end
-
     # Compute averages over trials.
     chi_average = vec(mean(chi_values, dims=1))
     s_max_average = vec(mean(s_max_values, dims=1))
@@ -186,7 +176,8 @@ end
 # -------------------------------------------------
 # Example: Simulation for Different System Sizes
 # -------------------------------------------------
-system_sizes = [100, 1000, 5000, 12000, 20000, 30000, 80000]
+system_sizes = [100, 1000, 5000, 12000,20000]
+# 14hours for N= 200000
 critical_points = Float64[]
 simulation_data = Dict{Int,Dict{String,Any}}()
 
@@ -226,9 +217,9 @@ p_critical = plot(1.0 ./ system_sizes, critical_points,
 display(p_critical)
 
 # Create three plots for the simulation data.
-p_sim1 = plot(title="Variance of the reduced cluster size", xlabel="p", ylabel="Susceptibilities 1")
-p_sim2 = plot(title="GCC Fraction scaled", xlabel="p", ylabel="GCC Fraction * N^(1/3)")
-p_sim3 = plot(title="Variance of the GCC", xlabel="p", ylabel="Susceptibilities 2")
+p_sim1 = plot(title="Variance of the reduced cluster size", xlabel="p", ylabel="Susceptibilities 1",dpi=300)
+p_sim2 = plot(title="GCC Fraction scaled", xlabel="p", ylabel="GCC Fraction * N^(1/3)",dpi=300)
+p_sim3 = plot(title="Variance of the GCC", xlabel="p", ylabel="Susceptibilities 2",dpi=300)
 
 for N in system_sizes
     data = simulation_data[N]
@@ -246,3 +237,8 @@ display(p_sim1)
 display(p_sim2)
 display(p_sim3)
 
+# Save the plots to disk.
+savefig(p_critical, "Figure/critical_points_vs_N.png")
+savefig(p_sim1, "Figure/variance_reduced_cluster_size.png")
+savefig(p_sim2, "Figure/GCC_fraction_scaled.png")
+savefig(p_sim3, "Figure/variance_GCC.png")
