@@ -5,43 +5,48 @@
 # a Newman–Ziff–inspired method and performs data analysis and plotting.
 #
 # Required packages:
+#   - Distributed
 #   - Random
 #   - Statistics
 #   - Plots
-#   - LsqFit
+#   - Colors
+#   - ProgressMeter
+#   - BenchmarkTools
 #
 # To run:
-#   julia er_percolation.jl
+#   julia -p 20 er_percolation.jl
 ###############################################################################
+
 using Distributed
-@everywhere using Random
-@everywhere using Statistics
-@everywhere using Plots
-@everywhere using Colors
-@everywhere using ProgressMeter
-@everywhere using BenchmarkTools
-@everywhere using Distributed
-addprocs(20)  # or however many processes you need
-@everywhere using SharedArrays
-# using LsqFit
+# Add worker processes (if not already started externally)
+if nprocs() == 1
+    addprocs(15)
+end
+
+@everywhere begin
+    using Random
+    using Statistics
+    using Plots
+    using Colors
+    using ProgressMeter
+    using BenchmarkTools
+    using SharedArrays
+end
 
 # -----------------------------
 # Union-Find Data Structure
 # -----------------------------
-
 @everywhere mutable struct UnionFind
     parent::Vector{Int}
     rank::Vector{Int}
 end
 
-# Constructor: initialize each node as its own parent; ranks start at zero.
 @everywhere function UnionFind(n::Int)
     parent = collect(1:n)    # Julia uses 1-indexing.
     rank = zeros(Int, n)
     return UnionFind(parent, rank)
 end
 
-# Find with path compression.
 @everywhere function uf_find(uf::UnionFind, x::Int)
     if uf.parent[x] != x
         uf.parent[x] = uf_find(uf, uf.parent[x])
@@ -49,7 +54,6 @@ end
     return uf.parent[x]
 end
 
-# Union by rank.
 @everywhere function uf_union(uf::UnionFind, x::Int, y::Int)
     root_x = uf_find(uf, x)
     root_y = uf_find(uf, y)
@@ -69,7 +73,7 @@ end
 # Newman-Ziff ER Percolation Simulation Function
 # ------------------------------------------------------
 """
-    newman_ziff_er_percolation_avg_degree(N; trials=1000, window_fraction=0.01)
+    newman_ziff_er_percolation_avg_degree(N; trials=1000, window_fraction=0.01, max_points=1000)
 
 Simulates bond percolation on an ER graph of `N` nodes over `trials` realizations.
 Data is recorded in a window around `m = N/2` with relative half-width
@@ -79,7 +83,6 @@ Data is recorded in a window around `m = N/2` with relative half-width
 - chi_average: the averaged susceptibility of the reduced clusters,
 - GCC_fraction: the fraction of nodes in the giant connected component.
 """
-
 function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_fraction::Float64=0.01, max_points::Int=1000)
     # Compute window parameters.
     n = max(1, floor(Int, window_fraction * N))
@@ -88,29 +91,31 @@ function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_
     sampling_interval = full_points / num_window_points  # e.g. if full_points=2000 and max_points=1000, sampling_interval=2
 
     # Define the range of p-values (edge densities) for the recording window.
-    p_values = range((N / 2 - n) / N, stop=(N / 2 + n) / N, length=num_window_points)
+    p_values = collect(range((N / 2 - n) / N, stop=(N / 2 + n) / N, length=num_window_points))
 
-    # Allocate arrays to store the largest cluster sizes and susceptibility values.
+    # Allocate SharedArrays for storing the largest cluster sizes and susceptibility values.
     s_max_values = SharedArray{Float64}((trials, num_window_points))
     chi_values = SharedArray{Float64}((trials, num_window_points))
 
-    # Function to perform a single trial
-    function perform_trial(t)
+    # Define a function to perform a single trial.
+    @everywhere function perform_trial(N::Int, window_fraction::Float64, num_window_points::Int, sampling_interval::Float64)
+        n = max(1, floor(Int, window_fraction * N))
         # Create a shuffled list of all possible edges.
         edges = [(i, j) for i in 1:N for j in (i+1):N]
         shuffle!(edges)
-
+    
         uf = UnionFind(N)
         record_idx = 1         # index in the sampling window (1 .. num_window_points)
         sample_counter = 0     # counts how many edges in the window have been processed
-
-        # Process edges sequentially.
+    
+        # Arrays to hold the trial's results.
+        s_max_trial = zeros(Float64, num_window_points)
+        chi_trial = zeros(Float64, num_window_points)
+    
         for (edge_count, (u, v)) in enumerate(edges)
             uf_union(uf, u, v)
-            # Only record data if edge_count is within the window.
             if (edge_count > (N / 2 - n)) && (edge_count <= (N / 2 + n))
                 sample_counter += 1
-                # Check if it's time to record a sample.
                 if sample_counter ≥ sampling_interval * record_idx
                     # Compute cluster sizes.
                     component_sizes = zeros(Int, N)
@@ -119,20 +124,18 @@ function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_
                         component_sizes[root] += 1
                     end
                     largest_cluster = maximum(component_sizes)
-                    # Exclude the largest cluster to compute susceptibility.
+                    # Compute susceptibility excluding the largest cluster.
                     reduced_cluster = component_sizes[component_sizes .!= largest_cluster]
-
                     chi = 0.0
                     if sum(reduced_cluster) != 0
                         unique_vals = unique(reduced_cluster)
                         counts_arr = [count(==(val), reduced_cluster) for val in unique_vals]
                         chi = sum(counts_arr .* (unique_vals .^ 2)) / sum(reduced_cluster)
                     end
-
-                    chi_values[t, record_idx] = chi
-                    s_max_values[t, record_idx] = largest_cluster
+    
+                    chi_trial[record_idx] = chi
+                    s_max_trial[record_idx] = largest_cluster
                     record_idx += 1
-                    # Stop if we've collected all the desired samples.
                     if record_idx > num_window_points
                         break
                     end
@@ -141,11 +144,18 @@ function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_
                 break
             end
         end
+        return s_max_trial, chi_trial
     end
 
-    # Run trials in parallel
-    @distributed for t in 1:trials
-        perform_trial(t)
+    # Run trials in parallel using a distributed loop.
+    @sync @distributed for t in 1:trials
+        # Each trial gets its own result.
+        s_trial, chi_trial = perform_trial(N, window_fraction, num_window_points, sampling_interval)
+        # Write into the corresponding row of the shared arrays.
+        for i in 1:num_window_points
+            s_max_values[t, i] = s_trial[i]
+            chi_values[t, i] = chi_trial[i]
+        end
     end
 
     # Compute averages over trials.
@@ -157,42 +167,19 @@ function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_
     s_max_sq_mean = vec(mean(s_max_values .^ 2, dims=1))
     var_smax = sqrt.(s_max_sq_mean .- s_max_average .^ 2)
 
-    return collect(p_values), var_smax, chi_average, GCC_fraction
+    return p_values, var_smax, chi_average, GCC_fraction
 end
 
 # -----------------------------
-# Example: Single Run (N=1000)
-# -----------------------------
-# system_size = 1000
-# trials = 100
-# p_vals, susceptibilities_1, susceptibilities_2, GCC_fraction = newman_ziff_er_percolation_avg_degree(system_size; trials=trials, window_fraction=0.1)
-
-# # Create two separate plots.
-# p_single_1 = plot(p_vals, GCC_fraction,
-#     marker=:circle, linestyle=:solid,
-#     label="GCC Fraction",
-#     title="ER Percolation for N=$system_size",
-#     xlabel="p (edge density)", ylabel="GCC Fraction")
-
-# p_single_2 = plot(p_vals, susceptibilities_2,
-#     marker=:circle, linestyle=:solid,
-#     label="Susceptibility",
-#     title="ER Percolation for N=$system_size",
-#     xlabel="p (edge density)", ylabel="Susceptibility")
-
-# display(p_single_1)
-# display(p_single_2)
-
-# -------------------------------------------------
 # Example: Simulation for Different System Sizes
-# -------------------------------------------------
+# -----------------------------
 system_sizes = [100, 1000, 5000, 12000, 20000, 30000, 80000]
 critical_points = Float64[]
-simulation_data = Dict{Int,Dict{String,Any}}()
+simulation_data = Dict{Int, Dict{String, Any}}()
 
 @showprogress for N in system_sizes
-    # Notice the btime has its own scope.
     start_time = time_ns()
+    # Run the simulation for each system size with 100 trials.
     p_vals, susceptibilities_1, susceptibilities_2, GCC_fraction = newman_ziff_er_percolation_avg_degree(N; trials=100, window_fraction=0.09)
     simulation_data[N] = Dict(
         "p_vals" => p_vals,
@@ -202,20 +189,14 @@ simulation_data = Dict{Int,Dict{String,Any}}()
     )
     # Heuristic: compute the discrete derivative d(GCC_fraction)/dp.
     dGCC_dp = diff(GCC_fraction) ./ diff(p_vals)
-    # Find the index where the derivative is maximal.
     idx = findmax(dGCC_dp)[2]
     p_c = p_vals[idx]
     push!(critical_points, p_c)
-    println("Estimated percolation threshold (p_c) for ER graph with N=$N: $(round(p_c, digits = 4))")
-    # Record the end time in nanoseconds
+    println("Estimated percolation threshold (p_c) for ER graph with N=$N: $(round(p_c, digits=4))")
     end_time = time_ns()
-
-    # Calculate the elapsed time in seconds
     elapsed_time = (end_time - start_time) / 1e9
     println("Elapsed time: $elapsed_time seconds")
 end
-
-
 
 # Plot critical points vs. 1/N.
 p_critical = plot(1.0 ./ system_sizes, critical_points,
@@ -245,4 +226,3 @@ end
 display(p_sim1)
 display(p_sim2)
 display(p_sim3)
-
