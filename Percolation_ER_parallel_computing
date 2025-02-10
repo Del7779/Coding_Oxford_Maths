@@ -8,7 +8,7 @@
 using Distributed
 # If worker processes were not started externally, add some.
 if nprocs() == 1
-    addprocs(4)
+    addprocs(10)
 end
 
 @everywhere begin

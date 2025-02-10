@@ -1,0 +1,130 @@
+using Random
+using Statistics
+using Plots
+
+# -----------------------------
+# Union-Find Data Structure
+# -----------------------------
+mutable struct UnionFind
+    parent::Vector{Int}
+    rank::Vector{Int}
+end
+
+# Constructor: initialize each node as its own parent; ranks start at zero.
+function UnionFind(n::Int)
+    parent = collect(1:n)    # Julia uses 1-indexing.
+    rank = zeros(Int, n)
+    return UnionFind(parent, rank)
+end
+
+# Find with path compression.
+function uf_find(uf::UnionFind, x::Int)
+    if uf.parent[x] != x
+        uf.parent[x] = uf_find(uf, uf.parent[x])
+    end
+    return uf.parent[x]
+end
+
+# Union by rank.
+function uf_union(uf::UnionFind, x::Int, y::Int)
+    root_x = uf_find(uf, x)
+    root_y = uf_find(uf, y)
+    if root_x != root_y
+        if uf.rank[root_x] > uf.rank[root_y]
+            uf.parent[root_y] = root_x
+        elseif uf.rank[root_x] < uf.rank[root_y]
+            uf.parent[root_x] = root_y
+        else
+            uf.parent[root_y] = root_x
+            uf.rank[root_x] += 1
+        end
+    end
+end
+
+# -----------------------------
+# Utility Functions
+# -----------------------------
+# Compute cluster sizes from the union-find structure.
+# Returns an array of nonzero cluster sizes.
+function compute_cluster_sizes(uf::UnionFind)
+    n = length(uf.parent)
+    sizes = zeros(Int, n)
+    for i in 1:n
+        root = uf_find(uf, i)
+        sizes[root] += 1
+    end
+    return filter(x -> x != 0, sizes)
+end
+
+# Compute the susceptibility.
+# Exclude the largest cluster (the "giant" component) when computing susceptibility.
+function susceptibility(sizes::Vector{Int})
+    if isempty(sizes)
+        return 0.0
+    end
+    smax = maximum(sizes)
+    reduced = filter(s -> s != smax, sizes)
+    if isempty(reduced)
+        return 0.0
+    end
+    # Define susceptibility as sum(s^2) / sum(s) for the reduced clusters.
+    return sum(x -> x^2, reduced) / sum(reduced)
+end
+
+# -----------------------------
+# Main Simulation Function
+# -----------------------------
+"""
+    simulate_ER_susceptibility(N; record_interval=10)
+
+Simulates an Erdős–Rényi random graph on N nodes.
+Edges are added in a random order. At every `record_interval` added edge,
+the function computes the current cluster size distribution and the susceptibility
+(excluding the largest cluster). It returns two arrays:
+  - x: the ratio m/N (i.e. the edge density),
+  - chi_vals: the susceptibility at each recorded step.
+"""
+function simulate_ER_susceptibility(N::Int; record_interval::Int=10)
+    # Generate all possible edges in a complete graph on N nodes.
+    edges = [(i, j) for i in 1:N for j in (i+1):N]
+    shuffle!(edges)  # Randomize the order in which edges will be added.
+    
+    uf = UnionFind(N)
+    m_vals = Int[]
+    chi_vals = Float64[]
+    
+    m = 0  # Number of edges added so far.
+    for (edge_count, (u, v)) in enumerate(edges)
+        uf_union(uf, u, v)
+        m += 1
+        # Record every record_interval edges.
+        if edge_count % record_interval == 0
+            sizes = compute_cluster_sizes(uf)
+            chi = susceptibility(sizes)
+            push!(m_vals, m)
+            push!(chi_vals, chi)
+        end
+        # (Optional) Stop early if the average degree exceeds a threshold.
+        if m/N > 2.0
+            break
+        end
+    end
+    
+    # Convert m_vals to the ratio m/N.
+    ratio = [m_val / N for m_val in m_vals]
+    return ratio, chi_vals
+end
+
+# -----------------------------
+# Run Simulation and Plot
+# -----------------------------
+N = 3000  # Number of nodes in the ER random graph.
+ratio, chi_vals = simulate_ER_susceptibility(N; record_interval=10)
+
+# Plot susceptibility evolution.
+plot(ratio, chi_vals,
+    marker = :circle, linestyle = :solid,
+    xlabel = "m/N (Edge Density)",
+    ylabel = "Susceptibility",
+    title = "Susceptibility Evolution in ER Graph (N = $N)",
+    legend = false)
