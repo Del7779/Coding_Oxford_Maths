@@ -102,10 +102,21 @@ function edge_unrank(r::Int, N::Int)
 end
 
 # Generator that produces all edges in a random order using a linear congruential permutation.
+const used_ab_pairs = Set{Tuple{Int, Int}}()
+
 function shuffled_edges(N::Int)
-    T = div(N * (N - 1), 2)  # total number of edges in a complete graph on N nodes
-    a = random_coprime(T)   # choose a random multiplier that is coprime with T
-    b = rand(0:T-1)         # choose an arbitrary offset
+    T = div(N * (N - 1), 2) 
+    a = 0::Int
+    b = 0::Int # Total number of edges in a complete graph on N nodes
+    while true
+        a = random_coprime(T)  # Choose a random multiplier that is coprime with T
+        b = rand(0:T-1)        # Choose an arbitrary offset
+        if (a, b) ∉ used_ab_pairs
+            push!(used_ab_pairs, (a, b))  # Store the used pair
+            break
+        end
+    end
+    # println("a: $a, b: $b")
     # The mapping r -> mod(a*r + b, T) defines a permutation of 0:(T-1).
     return ( edge_unrank(mod(a * r + b, T), N) for r in 0:(T-1) )
 end
@@ -156,10 +167,12 @@ function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_
     # Loop over trials.
     for t in 1:trials
         uf = UnionFind(N)  
+        
         # Use the on‐the‐fly shuffled generator of edges.
-        # edges = shuffled_edges(N)
-        edges = neman_shuffle(N)
-         # Your union–find data structure (assumed to be defined elsewhere
+        edges = shuffled_edges(N)
+        
+        # edges = neman_shuffle(N)
+        
         record_idx = 1      # index in the sampling window (1 .. num_window_points)
         sample_counter = 0  # counts how many edges in the window have been processed
 
@@ -324,7 +337,7 @@ for N in system_sizes
         marker = (:circle, 3, :white, stroke(0.2, color_val)))
     
     # Plot on p_sim2: same marker style.
-    plot!(p_sim2, data["p_vals"], data["GCC_fraction"],
+    plot!(p_sim2, data["p_vals"], data["GCC_fraction"]*N^(1/3),
         label = "N=$N",
         linecolor = color_val, lw = 1,
         marker = (:circle, 3, :white, stroke(0.2, color_val)))
@@ -355,8 +368,8 @@ for N in system_sizes
     end
 end
 
-xx = 10 .^ (-0.3:0.01:-0.2)
-plot(p_sim4,xx, xx.*10^(-1.7),lw=2, label="slope = 1")
+xx = 10 .^ (-0.2:0.01:-0.1)
+plot(p_sim4,xx, xx.*10^(-1),lw=2, label="slope = 1")
 display(p_sim1)
 display(p_sim2)
 display(p_sim3)
@@ -366,10 +379,10 @@ display(p_sim4)
 
 
 
-# # Save the plots to disk.
-# savefig(p_critical, "Figure/critical_points_vs_N.png")
-# savefig(p_sim1, "Figure/variance_reduced_cluster_size.png")
-# savefig(p_sim2, "Figure/GCC_fraction_scaled.png")
-# savefig(p_sim3, "Figure/variance_GCC.png")
+# Save the plots to disk.
+savefig(p_critical, "Figure/critical_points_vs_N.png")
+savefig(p_sim1, "Figure/variance_reduced_cluster_size.png")
+savefig(p_sim2, "Figure/GCC_fraction_scaled.png")
+savefig(p_sim3, "Figure/variance_GCC.png")
 
 
