@@ -3,24 +3,13 @@
 #
 # This script simulates bond percolation on an Erdős–Rényi (ER) graph using
 # a Newman–Ziff–inspired method and performs data analysis and plotting.
-#
-# Required packages:
-#   - Random
-#   - Statistics
-#   - Plots
-#   - LsqFit
-#
-# To run:
-#   julia er_percolation.jl
-###############################################################################
-
 using Random
 using Statistics
 using Plots
 using Colors
 using ProgressMeter
 using BenchmarkTools
-# using LsqFit
+using StatsBase  # For the sample() function
 
 # -----------------------------
 # Union-Find Data Structure
@@ -61,7 +50,7 @@ function uf_union(uf::UnionFind, x::Int, y::Int)
     end
 end
 
-
+# This newman shuffle is basically a Fisher-Yates shuffle （Shuffle）
 function neman_shuffle(N::Int)
     edges = [(i,j) for i in 1:N for j in (i+1):N]
     M = length(edges)
@@ -71,27 +60,9 @@ function neman_shuffle(N::Int)
     end
     return edges
 end
-# ------------------------------------------------------
-# Newman-Ziff ER Percolation Simulation Function
-# ------------------------------------------------------
-"""
-    newman_ziff_er_percolation_avg_degree(N; trials=1000, window_fraction=0.01)
 
-Simulates bond percolation on an ER graph of `N` nodes over `trials` realizations.
-Data is recorded in a window around `m = N/2` with relative half-width
-`window_fraction`. Returns a tuple containing:
-- p_values: the edge density values,
-- var_smax: the standard deviation of the largest cluster size,
-- chi_average: the averaged susceptibility of the reduced clusters,
-- GCC_fraction: the fraction of nodes in the giant connected component.
-"""
-
-
-using StatsBase  # For the sample() function
-# -------------------------------
-# Utility functions for the shuffle
-# -------------------------------
-
+# -----------------------------
+# A dynamical way to shuffle
 # Compute the greatest common divisor.
 function gcd(a::Int, b::Int)
     b == 0 ? a : gcd(b, a % b)
@@ -107,6 +78,7 @@ function random_coprime(T::Int)
     end
 end
 
+random_coprime(6)
 # Given an index r (0-indexed), convert it to the corresponding edge (i, j)
 # in a complete graph with N nodes. The edges are assumed to be ordered lexicographically.
 function edge_unrank(r::Int, N::Int)
@@ -138,18 +110,22 @@ function shuffled_edges(N::Int)
     return ( edge_unrank(mod(a * r + b, T), N) for r in 0:(T-1) )
 end
 
-# #---------------------------
 
+# ------------------------------------------------------
+# Newman-Ziff ER Percolation Simulation Function
+# ------------------------------------------------------
+"""
+    newman_ziff_er_percolation_avg_degree(N; trials=1000, window_fraction=0.01)
 
-# edges = shuffled_edges(100)
-# for (indx,(i,j)) in enumerate(edges)
-#    println("Edge $indx: ($i, $j)")
-# end
+Simulates bond percolation on an ER graph of `N` nodes over `trials` realizations.
+Data is recorded in a window around `m = N/2` with relative half-width
+`window_fraction`. Returns a tuple containing:
+- p_values: the edge density values,
+- var_smax: the standard deviation of the largest cluster size,
+- chi_average: the averaged susceptibility of the reduced clusters,
+- GCC_fraction: the fraction of nodes in the giant connected component.
+"""
 
-
-# -------------------------------
-# Newman–Ziff percolation function using the on‐the‐fly shuffle
-# -------------------------------
 function susceptibility(sizes::Vector{Int})
     if isempty(sizes)
         return 0.0
@@ -233,11 +209,14 @@ end
 
 # -----------------------------
 # Example: Single Run (N=1000)
-
+# start_time = time_ns()
 # system_size = 10000
 # trials = 100
 # p_vals, susceptibilities_1, susceptibilities_2, GCC_fraction = newman_ziff_er_percolation_avg_degree(system_size; trials=trials, window_fraction=0.4)
-
+# # Record the end time in nanoseconds
+# end_time = time_ns()
+# # Calculate the elapsed time in seconds
+# elapsed_time = (end_time - start_time) / 1e9
 # # Create two separate plots.
 # p_single_1 = plot(p_vals, GCC_fraction,
 #     marker=:circle, linestyle=:solid,
