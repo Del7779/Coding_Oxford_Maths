@@ -9,7 +9,58 @@ using Plots
 using Colors
 using ProgressMeter
 using BenchmarkTools
-using StatsBase  # For the sample() function
+using StatsBase  
+using Pkg
+using Combinatorics
+
+combinations(1, 2)
+collect(combinations(1, 20))
+
+
+using Combinatorics  # Required for binomial coefficient binomial(n, m)
+
+function index_to_edge_comb(index::Int, n::Int, m::Int)
+    """
+    Generate a hyperedge from an index given the number of nodes and hyperedge size.
+
+    Parameters:
+    -----------
+    index :: Int  → The 1-based index of the hyperedge in lexicographic order.
+    n :: Int  → The number of nodes.
+    m :: Int  → The hyperedge size.
+
+    Returns:
+    --------
+    Vector{Int} → The hyperedge corresponding to the given index.
+
+    Example:
+    --------
+    index_to_edge_comb(3, 4, 3)  # Returns [0, 2, 3]
+    """
+    total_combinations = binomial(n, m)
+
+    if index < 1 || index > total_combinations
+        throw(ArgumentError("Index $index out of range (must be between 1 and $total_combinations)"))
+    end
+
+    c = Int[] # Tuple to store the selected hyperedge
+    j = -1  # Tracks the last selected node
+    index -= 1  # Convert 1-based index to 0-based for combinatorial calculations
+
+    for s in 1:m
+        cs = j + 1
+        while index - binomial(n - 1 - cs, m - s) ≥ 0
+            index -= binomial(n - 1 - cs, m - s)
+            cs += 1
+        end
+        push!(c, cs)
+        j = cs
+    end
+
+    return Tuple(c .+ 1) # Convert 0-based to 1-based indexing
+end
+
+index_to_edge_comb(2, 4, 2)  # Returns [0, 1, 2]
 
 # -----------------------------
 # Union-Find Data Structure
@@ -169,15 +220,22 @@ function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_
         uf = UnionFind(N)  
         
         # Use the on‐the‐fly shuffled generator of edges.
-        edges = shuffled_edges(N)
-        
+        # edges = shuffled_edges(N)
         # edges = neman_shuffle(N)
-        
+         # Your union–find data structure (assumed to be defined elsewhere
         record_idx = 1      # index in the sampling window (1 .. num_window_points)
         sample_counter = 0  # counts how many edges in the window have been processed
-
+        index_track = Set{Int}()
         # Process edges sequentially.
-        for (edge_count, (u, v)) in enumerate(edges)
+        N_limit::Int = N/2 + n
+        M::Int = N * (N - 1) / 2
+        for edge_count in 1:N_limit
+            index_random = rand(1:M)
+            while index_random in index_track  # Ensure uniqueness
+                index_random = rand(1:M)
+            end
+            push!(index_track, index_random)
+            (u,v) = index_to_edge_comb(index_random, N, 2)
             uf_union(uf, u, v)
             # Only record data if edge_count is within the recording window.
             if (edge_count > (N / 2 - n)) && (edge_count <= (N / 2 + n))
@@ -202,8 +260,6 @@ function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_
                         break
                     end
                 end
-            elseif edge_count > (N / 2 + n)
-                break
             end
         end
     end
@@ -250,7 +306,7 @@ end
 # Example: Simulation for Different System Sizes
 # -------------------------------------------------
 system_sizes = [100, 1000, 10000, 20000,100000,800000]
-system_sizes = [100, 1000, 5000, 10000, 20000]
+system_sizes = [5000]
 
 # 14hours for N= 200000
 critical_points = Float64[]
