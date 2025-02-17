@@ -105,67 +105,6 @@ function neman_shuffle(N::Int)
     return edges
 end
 
-# -----------------------------
-# A dynamical way to shuffle
-# Compute the greatest common divisor.
-function gcd(a::Int, b::Int)
-    b == 0 ? a : gcd(b, a % b)
-end
-
-# Pick a random integer in 1:(T-1) that is coprime with T.
-function random_coprime(T::Int)
-    while true
-        a = rand(1:T-1)
-        if gcd(a, T) == 1
-            return a
-        end
-    end
-end
-
-random_coprime(6)
-# Given an index r (0-indexed), convert it to the corresponding edge (i, j)
-# in a complete graph with N nodes. The edges are assumed to be ordered lexicographically.
-function edge_unrank(r::Int, N::Int)
-    # We wish to find i such that:
-    #   S(i) = (i-1)*N - ((i-1)*i) ÷ 2 ≤ r < S(i+1)
-    lo = 1
-    hi = N + 1  # hi is one past the last valid i
-    while lo < hi
-        mid = (lo + hi) ÷ 2
-        S_mid = (mid - 1) * N - div((mid - 1) * mid, 2)
-        if S_mid <= r
-            lo = mid + 1
-        else
-            hi = mid
-        end
-    end
-    i = lo - 1
-    S_i = (i - 1) * N - div((i - 1) * i, 2)
-    j = i + 1 + (r - S_i)
-    return (i, j)
-end
-
-# Generator that produces all edges in a random order using a linear congruential permutation.
-const used_ab_pairs = Set{Tuple{Int, Int}}()
-
-function shuffled_edges(N::Int)
-    T = div(N * (N - 1), 2) 
-    a = 0::Int
-    b = 0::Int # Total number of edges in a complete graph on N nodes
-    while true
-        a = random_coprime(T)  # Choose a random multiplier that is coprime with T
-        b = rand(0:T-1)        # Choose an arbitrary offset
-        if (a, b) ∉ used_ab_pairs
-            push!(used_ab_pairs, (a, b))  # Store the used pair
-            break
-        end
-    end
-    # println("a: $a, b: $b")
-    # The mapping r -> mod(a*r + b, T) defines a permutation of 0:(T-1).
-    return ( edge_unrank(mod(a * r + b, T), N) for r in 0:(T-1) )
-end
-
-
 # ------------------------------------------------------
 # Newman-Ziff ER Percolation Simulation Function
 # ------------------------------------------------------
@@ -215,7 +154,7 @@ function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_
         # Use the on‐the‐fly shuffled generator of edges.
         # edges = shuffled_edges(N)
         # edges = neman_shuffle(N)
-         # Your union–find data structure (assumed to be defined elsewhere
+
         record_idx = 1      # index in the sampling window (1 .. num_window_points)
         sample_counter = 0  # counts how many edges in the window have been processed
         index_track = Set{Int}()
@@ -231,7 +170,7 @@ function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_
             (u,v) = index_to_edge_comb(index_random, N, 2)
             uf_union(uf, u, v)
             # Only record data if edge_count is within the recording window.
-            if (edge_count > (N / 2 - n)) && (edge_count <= (N / 2 + n))
+            if  edge_count > (N / 2 - n)
                 sample_counter += 1
                 # Check if it's time to record a sample.
                 if sample_counter ≥ sampling_interval * record_idx
@@ -248,10 +187,6 @@ function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_
                     chi_values[t, record_idx] = chi
                     s_max_values[t, record_idx] = largest_cluster
                     record_idx += 1
-                    # Stop if we've collected all the desired samples.
-                    if record_idx > num_window_points
-                        break
-                    end
                 end
             end
         end
@@ -298,8 +233,7 @@ end
 # -------------------------------------------------
 # Example: Simulation for Different System Sizes
 # -------------------------------------------------
-system_sizes = [100, 1000, 10000, 20000,100000,800000]
-system_sizes = [5000]
+system_sizes = [100, 1000, 10000, 20000, 60000]
 
 # 14hours for N= 200000
 critical_points = Float64[]
@@ -308,7 +242,7 @@ simulation_data = Dict{Int,Dict{String,Any}}()
 @showprogress for N in system_sizes
     # Notice the btime has its own scope.
     start_time = time_ns()
-    p_vals, susceptibilities_1, susceptibilities_2, GCC_fraction = newman_ziff_er_percolation_avg_degree(N; trials=1000, window_fraction=0.4)
+    p_vals, susceptibilities_1, susceptibilities_2, GCC_fraction = newman_ziff_er_percolation_avg_degree(N; trials=1000, window_fraction=0.1)
     simulation_data[N] = Dict(
         "p_vals" => p_vals,
         "susceptibilities_1" => susceptibilities_1,
@@ -364,26 +298,34 @@ display(p_critical)
  
 using Plots
 using PyPlot
-pyplot()
 # Uncomment the following line to switch to the PyPlot backend:
-# pyplot()
+pyplot()
 
 # Create four empty plots with titles, axis labels, and high resolution.
 p_sim1 = plot(title="Variance of the reduced cluster size", legend=:outerright, xlabel="p", ylabel="Susceptibilities 1", dpi=300)
+vline!(p_sim1, [0.5], linestyle=:dash, label="", lw=2)
 p_sim2 = plot(title="GCC Fraction scaled", xlabel="p", ylabel="GCC Fraction * N^(1/3)", dpi=300, legend=:outerright)
+vline!(p_sim2, [0.5], linestyle=:dash, label="",lw=2)
 p_sim3 = plot(title="Variance of the GCC", xlabel="p", ylabel="Susceptibilities 2", dpi=300, legend=:outerright)
-p_sim4 = plot(title="S vs (p-pc)", xlabel="p-pc", ylabel="GCC Fraction", dpi=300, legend=:outerright)
+vline!(p_sim3, [0.5], linestyle=:dash, label="",lw=2)
+p_sim4 = plot(title="S vs (p-pc)", xlabel="p-pc", ylabel="GCC Fraction", dpi=300, legend=:outerright,lw=2)
 
-for N in system_sizes
+for ii in 1:length(system_sizes)
+    N = system_sizes[ii]
     data = simulation_data[N]
     # Choose a color that varies with system size (e.g., varying the red channel).
-    color_val = RGB(N / maximum(system_sizes), 0.0, 0.0)
+    color_val = RGB(ii / length(system_sizes), 0.0, 0.0)
     
     # Plot on p_sim1: empty markers with outlines and a connecting line.
     plot!(p_sim1, data["p_vals"], data["susceptibilities_1"],
         label = "N=$N",
         linecolor = color_val, lw = 1,
         marker = (:circle, 3, :white, stroke(0.2, color_val)))
+    # Find peak of susceptibilities and add vertical line
+
+    peak_idx = argmax(data["susceptibilities_1"])
+    peak_p = data["p_vals"][peak_idx]
+    vline!(p_sim1, [peak_p], linestyle=:dash, linecolor=color_val, legend=:false)
     
     # Plot on p_sim2: same marker style.
     plot!(p_sim2, data["p_vals"], data["GCC_fraction"]*N^(1/3),
@@ -396,6 +338,10 @@ for N in system_sizes
         label = "N=$N",
         linecolor = color_val, lw = 1,
         marker = (:circle, 3, :white, stroke(0.2, color_val)))
+    
+    peak_idx = argmax(data["susceptibilities_2"])
+    peak_p = data["p_vals"][peak_idx]
+    vline!(p_sim3, [peak_p], linestyle=:dash, linecolor=color_val,legend =:false)
     
     # Here we want to plot on p_sim4 using only the data for which (p_vals - 1/2) > 1/2.
     # First, compute (p_vals - 1/2) and get indices where the condition holds.
@@ -417,8 +363,8 @@ for N in system_sizes
     end
 end
 
-xx = 10 .^ (-0.2:0.01:-0.1)
-plot(p_sim4,xx, xx.*10^(-1),lw=2, label="slope = 1")
+xx = 10 .^ (-0.1:0.01:-0.05)
+plot!(p_sim4,xx, xx.*10^(-0.3),lw=2, label="slope = 1")
 display(p_sim1)
 display(p_sim2)
 display(p_sim3)
@@ -428,10 +374,11 @@ display(p_sim4)
 
 
 
-# # Save the plots to disk.
-# savefig(p_critical, "Figure/critical_points_vs_N.png")
-# savefig(p_sim1, "Figure/variance_reduced_cluster_size.png")
-# savefig(p_sim2, "Figure/GCC_fraction_scaled.png")
-# savefig(p_sim3, "Figure/variance_GCC.png")
+# Save the plots to disk.
+Plots.savefig(p_critical, "Figure/critical_points_vs_N.png")
+Plots.savefig(p_sim1, "Figure/variance_reduced_cluster_size.png")
+Plots.savefig(p_sim2, "Figure/GCC_fraction_scaled.png")
+Plots.savefig(p_sim3, "Figure/variance_GCC.png")
+Plots.savefig(p_sim4, "Figure/S_vs_p-pc.png")
 
 
