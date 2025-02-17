@@ -13,12 +13,6 @@ using StatsBase
 using Pkg
 using Combinatorics
 
-combinations(1, 2)
-collect(combinations(1, 20))
-
-
-using Combinatorics  # Required for binomial coefficient binomial(n, m)
-
 function index_to_edge_comb(index::Int, n::Int, m::Int)
     """
     Generate a hyperedge from an index given the number of nodes and hyperedge size.
@@ -43,7 +37,7 @@ function index_to_edge_comb(index::Int, n::Int, m::Int)
         throw(ArgumentError("Index $index out of range (must be between 1 and $total_combinations)"))
     end
 
-    c = Int[] # Tuple to store the selected hyperedge
+    c = Int[] # Vector to store the selected hyperedge
     j = -1  # Tracks the last selected node
     index -= 1  # Convert 1-based index to 0-based for combinatorial calculations
 
@@ -56,7 +50,6 @@ function index_to_edge_comb(index::Int, n::Int, m::Int)
         push!(c, cs)
         j = cs
     end
-
     return Tuple(c .+ 1) # Convert 0-based to 1-based indexing
 end
 
@@ -435,10 +428,10 @@ display(p_sim4)
 
 
 
-# Save the plots to disk.
-savefig(p_critical, "Figure/critical_points_vs_N.png")
-savefig(p_sim1, "Figure/variance_reduced_cluster_size.png")
-savefig(p_sim2, "Figure/GCC_fraction_scaled.png")
-savefig(p_sim3, "Figure/variance_GCC.png")
+# # Save the plots to disk.
+# savefig(p_critical, "Figure/critical_points_vs_N.png")
+# savefig(p_sim1, "Figure/variance_reduced_cluster_size.png")
+# savefig(p_sim2, "Figure/GCC_fraction_scaled.png")
+# savefig(p_sim3, "Figure/variance_GCC.png")
 
 
