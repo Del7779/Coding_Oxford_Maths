@@ -1,7 +1,7 @@
 using Distributions, Random, Plots, StatsBase, LinearAlgebra
 
 # Parameters
-N = 10     # Number of nodes
+N = 100     # Number of nodes
 λ = 5                # Mean degree (Poisson distribution)
 alpha = -5          # Connection probability ~ distance^alpha
 L = 100.0           # Domain size (L x L)
@@ -15,7 +15,7 @@ degree_remaining = copy(degrees)  # Track remaining degrees to allocate
 x = rand(N) * L
 y = rand(N) * L
 
-scatter(x, y, markersize=degrees, color=:red, alpha=0.7, label="", 
+Plots.scatter(x, y, markersize=degrees, color=:red, alpha=0.7, label="", 
     markerstrokecolor=:black, markerstrokewidth=0.5, title="Network")
 
 # Compute pairwise distances

@@ -53,7 +53,7 @@ function index_to_edge_comb(index::Int, n::Int, m::Int)
     return Tuple(c .+ 1) # Convert 0-based to 1-based indexing
 end
 
-index_to_edge_comb(2, 4, 2)  # Returns [0, 1, 2]
+# index_to_edge_comb(2, 4, 2)  # Returns [0, 1, 2]
 
 # -----------------------------
 # Union-Find Data Structure
@@ -146,6 +146,8 @@ function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_
     # Allocate arrays to store the largest cluster sizes and susceptibility values.
     s_max_values = zeros(Float64, trials, num_window_points)
     chi_values = zeros(Float64, trials, num_window_points)
+    N_limit::Int = N/2 + n
+    M::Int = N * (N - 1) / 2
 
     # Loop over trials.
     for t in 1:trials
@@ -157,16 +159,20 @@ function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_
 
         record_idx = 1      # index in the sampling window (1 .. num_window_points)
         sample_counter = 0  # counts how many edges in the window have been processed
-        index_track = Set{Int}()
-        # Process edges sequentially.
-        N_limit::Int = N/2 + n
-        M::Int = N * (N - 1) / 2
-        for edge_count in 1:N_limit
-            index_random = rand(1:M)
-            while index_random in index_track  # Ensure uniqueness
-                index_random = rand(1:M)
-            end
-            push!(index_track, index_random)
+        
+        # index_track = Set{Int}()
+        adding_order = sample(1:M, N_limit, replace=false)
+        
+        for edge_count in eachindex(adding_order)
+
+            # index_random = rand(1:M)
+            index_random = adding_order[edge_count] 
+            # index_random
+            # while index_random in index_track  # Ensure uniqueness
+            #     index_random = rand(1:M)
+            # end
+            # push!(index_track, index_random)
+
             (u,v) = index_to_edge_comb(index_random, N, 2)
             uf_union(uf, u, v)
             # Only record data if edge_count is within the recording window.
@@ -204,45 +210,18 @@ function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_
     return collect(p_values), var_smax, chi_average, GCC_fraction
 end
 
-# -----------------------------
-# Example: Single Run (N=1000)
-# start_time = time_ns()
-# system_size = 10000
-# trials = 100
-# p_vals, susceptibilities_1, susceptibilities_2, GCC_fraction = newman_ziff_er_percolation_avg_degree(system_size; trials=trials, window_fraction=0.4)
-# # Record the end time in nanoseconds
-# end_time = time_ns()
-# # Calculate the elapsed time in seconds
-# elapsed_time = (end_time - start_time) / 1e9
-# # Create two separate plots.
-# p_single_1 = plot(p_vals, GCC_fraction,
-#     marker=:circle, linestyle=:solid,
-#     label="GCC Fraction",
-#     title="ER Percolation for N=$system_size",
-#     xlabel="p (edge density)", ylabel="GCC Fraction")
-
-# p_single_2 = plot(p_vals, susceptibilities_1,
-#     marker=:circle, linestyle=:solid,
-#     label="Susceptibility",
-#     title="ER Percolation for N=$system_size",
-#     xlabel="p (edge density)", ylabel="Susceptibility")
-
-# display(p_single_1)
-# display(p_single_2)
-
 # -------------------------------------------------
 # Example: Simulation for Different System Sizes
 # -------------------------------------------------
-system_sizes = [100, 1000, 10000, 20000, 60000]
+system_sizes = [600, 1000, 50000, 10000, 100000]
 
 # 14hours for N= 200000
 critical_points = Float64[]
 simulation_data = Dict{Int,Dict{String,Any}}()
 
 @showprogress for N in system_sizes
-    # Notice the btime has its own scope.
     start_time = time_ns()
-    p_vals, susceptibilities_1, susceptibilities_2, GCC_fraction = newman_ziff_er_percolation_avg_degree(N; trials=1000, window_fraction=0.1)
+    p_vals, susceptibilities_1, susceptibilities_2, GCC_fraction = newman_ziff_er_percolation_avg_degree(N; trials=1000, window_fraction=0.2,max_points=100)
     simulation_data[N] = Dict(
         "p_vals" => p_vals,
         "susceptibilities_1" => susceptibilities_1,
@@ -262,62 +241,43 @@ simulation_data = Dict{Int,Dict{String,Any}}()
 end
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # -----------------------------
 # Plotting
 # -----------------------------
 # Plot critical points vs. 1/N.
-p_critical = plot(1.0 ./ system_sizes, critical_points,
+using Plots
+p_critical = Plots.plot(1.0 ./ system_sizes, critical_points,
     marker=:circle, linestyle=:solid,
     label="Critical Points",
     xlabel="1/N", ylabel="p_c",
-    title="Critical Points vs 1/N")
+    title="Critical Points vs 1/N",xscale=:log10,yscale=:log10)
 display(p_critical)
- 
-using Plots
-using PyPlot
-# Uncomment the following line to switch to the PyPlot backend:
-pyplot()
 
 # Create four empty plots with titles, axis labels, and high resolution.
-p_sim1 = plot(title="Variance of the reduced cluster size", legend=:outerright, xlabel="p", ylabel="Susceptibilities 1", dpi=300)
-vline!(p_sim1, [0.5], linestyle=:dash, label="", lw=2)
-p_sim2 = plot(title="GCC Fraction scaled", xlabel="p", ylabel="GCC Fraction * N^(1/3)", dpi=300, legend=:outerright)
-vline!(p_sim2, [0.5], linestyle=:dash, label="",lw=2)
-p_sim3 = plot(title="Variance of the GCC", xlabel="p", ylabel="Susceptibilities 2", dpi=300, legend=:outerright)
-vline!(p_sim3, [0.5], linestyle=:dash, label="",lw=2)
-p_sim4 = plot(title="S vs (p-pc)", xlabel="p-pc", ylabel="GCC Fraction", dpi=300, legend=:outerright,lw=2)
+p_sim1 = Plots.plot(title="Variance of the reduced cluster size", legend=:outerright, xlabel="p", ylabel="Susceptibilities 1", dpi=300);
+vline!(p_sim1, [0.5], linestyle=:dash, label="", lw=2);
+p_sim2 = Plots.plot(title="GCC Fraction scaled", xlabel="p", ylabel="GCC Fraction * N^(1/3)", dpi=300, legend=:outerright);
+vline!(p_sim2, [0.5], linestyle=:dash, label="",lw=2);
+p_sim3 = Plots.plot(title="Variance of the GCC", xlabel="p", ylabel="Susceptibilities 2", dpi=300, legend=:outerright);
+vline!(p_sim3, [0.5], linestyle=:dash, label="",lw=2);
+p_sim4 = Plots.plot(title="S vs (p-pc)", xlabel="p-pc", ylabel="GCC Fraction", dpi=300, legend=:outerright,lw=2);
+p_sim5 = Plots.plot(title="S_pc vs N", xlabel="N", ylabel="S_pc", dpi=300, legend=:outerright,lw=2);
+p_sim7 = Plots.plot(title="Collapse on master curve", xlabel = "(p-pc)*N^(1/3)" , ylabel = "S* N^(1/3)");
 
-for ii in 1:length(system_sizes)
+for ii in eachindex(system_sizes)
+
     N = system_sizes[ii]
     data = simulation_data[N]
+    # Find the index of the value closest to 1/2
+    _, indx = findmin(abs.(data["p_vals"] .- 0.5))
+    S_pc = data["GCC_fraction"][indx]
+    Plots.scatter!(p_sim5, [N], [S_pc], label="N=$N", marker=:circle, markersize=5,xscale=:log10,yscale=:log10)
+
     # Choose a color that varies with system size (e.g., varying the red channel).
     color_val = RGB(ii / length(system_sizes), 0.0, 0.0)
     
     # Plot on p_sim1: empty markers with outlines and a connecting line.
-    plot!(p_sim1, data["p_vals"], data["susceptibilities_1"],
+    Plots.plot!(p_sim1, data["p_vals"], data["susceptibilities_1"],
         label = "N=$N",
         linecolor = color_val, lw = 1,
         marker = (:circle, 3, :white, stroke(0.2, color_val)))
@@ -326,49 +286,115 @@ for ii in 1:length(system_sizes)
     peak_idx = argmax(data["susceptibilities_1"])
     peak_p = data["p_vals"][peak_idx]
     vline!(p_sim1, [peak_p], linestyle=:dash, linecolor=color_val, legend=:false)
-    
     # Plot on p_sim2: same marker style.
-    plot!(p_sim2, data["p_vals"], data["GCC_fraction"]*N^(1/3),
-        label = "N=$N",
-        linecolor = color_val, lw = 1,
-        marker = (:circle, 3, :white, stroke(0.2, color_val)))
-    
+    Plots.plot!(p_sim2, data["p_vals"], data["GCC_fraction"]*N^(1/3),
+    label = "N=$N",
+    linecolor = color_val, lw = 1,
+    marker = (:circle, 3, :white, stroke(0.2, color_val)))
+
     # Plot on p_sim3: same marker style.
-    plot!(p_sim3, data["p_vals"], data["susceptibilities_2"],
+    Plots.plot!(p_sim3, data["p_vals"], data["susceptibilities_2"],
         label = "N=$N",
         linecolor = color_val, lw = 1,
         marker = (:circle, 3, :white, stroke(0.2, color_val)))
     
     peak_idx = argmax(data["susceptibilities_2"])
     peak_p = data["p_vals"][peak_idx]
-    vline!(p_sim3, [peak_p], linestyle=:dash, linecolor=color_val,legend =:false)
+    vline!(p_sim3, [peak_p], linestyle=:dash, linecolor=color_val,label="")
     
     # Here we want to plot on p_sim4 using only the data for which (p_vals - 1/2) > 1/2.
     # First, compute (p_vals - 1/2) and get indices where the condition holds.
-    idx = findall(x -> x > 1/2, data["p_vals"])
+    idx = findall(x -> x .> 1/2, data["p_vals"])
     
     # Extract the filtered x and y data.
-    filtered_p_vals = data["p_vals"][idx]
+    filtered_p_vals = data["p_vals"][idx] .- 1/2 
     filtered_GCC = data["GCC_fraction"][idx]
     
     # Only plot if there is data to plot.
     if !isempty(filtered_p_vals)
-        plot!(p_sim4, filtered_p_vals, filtered_GCC,
+        Plots.plot!(p_sim4, filtered_p_vals, filtered_GCC,
             label = "N=$N",
+            xlims=(10^(-2),1), ylims=(10^(-2),1),  #
             linecolor = color_val, lw = 1,
             marker = (:circle, 3, :white, stroke(0.2, color_val)),
             xaxis = :log10, yaxis = :log10)
+                # Plot on p_sim2: same marker style.
+        Plots.plot!(p_sim7, filtered_p_vals*N^(1/3), (filtered_GCC)*N^(1/3),
+        xlims=(0,1), ylims=(0,3),  # Add x-axis limits from 0 to 1
+        label = "N=$N",
+        linecolor = color_val, lw = 1,
+        marker = (:circle, 3, :white, stroke(0.2, color_val)))
+
     else
         @warn "No points passed the filter for system size N=$N."
     end
 end
 
-xx = 10 .^ (-0.1:0.01:-0.05)
-plot!(p_sim4,xx, xx.*10^(-0.3),lw=2, label="slope = 1")
+# Prepare data points for fitting
+x_data = Float64[]
+y_data = Float64[]
+for N in system_sizes
+    data = simulation_data[N]
+    _, indx = findmin(abs.(data["p_vals"] .- 0.5))
+    S_pc = data["GCC_fraction"][indx]
+    push!(x_data, N)
+    push!(y_data, S_pc)
+end
+
+using Optim
+using LinearAlgebra
+# Define the power law function
+power_law(x, β) = β[1].*x.^β[2]
+
+# Define the objective function (sum of squared residuals)
+function objective(β)
+    pred = power_law(x_data, β)
+    return sum((y_data - pred).^2)
+end
+
+# Perform optimization
+result = optimize(objective, [-0.1,-0.1], BFGS())
+# Get the optimized parameters
+beta_opt = Optim.minimizer(result)
+println("Optimized β ≈ $(round(beta_opt[2], digits=3))")
+
+# Add the optimized power law to the plot
+plot!(p_sim5, x_data, power_law(x_data, beta_opt), label="β ≈ $(round(beta_opt[2], digits=3))", lw=2)
+
+
+# Prepare data points for fitting p_sim4
+x_data_4 = Float64[]
+y_data_4 = Float64[]
+for N in system_sizes[end]
+    data = simulation_data[N]
+    idx = findall(x -> x .> 1/2, data["p_vals"])
+    if !isempty(idx)
+        filtered_p_vals = data["p_vals"][idx] .- 1/2
+        filtered_GCC = data["GCC_fraction"][idx]
+        append!(x_data_4, filtered_p_vals)
+        append!(y_data_4, filtered_GCC)
+    end
+end 
+
+# Perform optimization for p_sim4
+function objective_4(β)
+    pred = power_law(x_data_4, β)
+    return sum((y_data_4 - pred).^2)
+end
+
+result_4 = optimize(objective_4, [1.0, 1.0], BFGS())
+beta_opt_4 = Optim.minimizer(result_4)
+println("Optimized β for p_sim4 ≈ $(round(beta_opt_4[2], digits=3))")
+
+# Add the optimized power law and guide line to p_sim4
+plot!(p_sim4,xx, power_law(xx, beta_opt_4), label="β ≈ $(round(beta_opt_4[2], digits=3))", lw=2,xscale=:log10,yscale=:log10)
+
 display(p_sim1)
 display(p_sim2)
 display(p_sim3)
 display(p_sim4)
+display(p_sim5)
+display(p_sim7)
 
 
 
@@ -380,5 +406,22 @@ Plots.savefig(p_sim1, "Figure/variance_reduced_cluster_size.png")
 Plots.savefig(p_sim2, "Figure/GCC_fraction_scaled.png")
 Plots.savefig(p_sim3, "Figure/variance_GCC.png")
 Plots.savefig(p_sim4, "Figure/S_vs_p-pc.png")
+Plots.savefig(p_sim5, "Figure/S_pc_vs_N.png")
+Plots.savefig(p_sim7, "Figure/collapse_on_master_curve.png")
 
+
+memory_used = @allocated newman_ziff_er_percolation_avg_degree(4000; trials=100, window_fraction=0.2)
+println("Memory allocated: ", memory_used / 1e6, " MB")
+
+# Profile the function with a small test case
+using Profile
+
+# Clear any existing profile data
+Profile.clear()
+
+# Enable profiling
+@profview newman_ziff_er_percolation_avg_degree(1000; trials=100, window_fraction=0.2)
+
+# Print the profile data
+Profile.print()
 
