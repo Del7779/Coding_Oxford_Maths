@@ -3,8 +3,9 @@ using BenchmarkTools
 using Plots
 using LsqFit
 using SpecialFunctions
+using Latexify, LaTeXStrings
 include("Union_Find.jl")
-
+println(L"$(\omega = 1)$")
 
 # Check percolation: here we check if there is a spanning cluster connecting
 # the top row (nodes 1:L) to the bottom row (nodes (L^2-L+1):L^2).
@@ -132,8 +133,8 @@ end
 # plot(p1, p2, layout=(2,1),size=(1200,800),legend=:outertopright)
 
 # Example usage
-L = [128, 256, 512, 1024]  # Lattice size
-realizations = 500  # Number of realizations
+L = [256, 512, 1024, 2048]  # Lattice size
+realizations = 1000  # Number of realizations
 simulation_data = Dict{Int,Tuple}()
 
 hf_order = plot(legend=:outerright,title="Fraction of largest cluster vs p",xlabel="p",ylabel="Fraction of largest cluster",figsize=(1200,800));
@@ -153,7 +154,9 @@ for l in L
 
     # simulate and store the data
     avg_gcc, avg_susceptibility, perc_prob, p_values = newman_ziff_bond_percolation(l, realizations; windows=windows_data)
-    simulation_data[l] = (avg_gcc, avg_susceptibility, perc_prob, p_values)
+    t_end = time()
+    elasp_time = t_end - t_start
+    simulation_data[l] = (avg_gcc, avg_susceptibility, perc_prob, p_values, elasp_time)
 
     # Fit with error function
     curve_fitted = curve_fit(erf_model, p_values, perc_prob, [0.5, 0.5, 0.1, 0.0])
@@ -166,9 +169,51 @@ for l in L
     fit_perc_prob = erf_model(p_values, curve_fitted.param)
     plot!(hf_prob, p_values, fit_perc_prob, label="Fit for L = $l")
     vline!(hf_prob, [est_pc], label="Estimated pc = $est_pc for L = $l", linestyle=:dash)
-    t_end = time()
-    println("L = $l: Estimated pc = $est_pc, Time = $(t_end - t_start)")
+    println("L = $l: Estimated pc = $est_pc, Time = $elasp_time")
     println("L = $l: Average GCC = $(mean(avg_gcc)), Average Susceptibility = $(mean(avg_susceptibility))")
 end
 
 display(plot(hf_order,hf_prob, layout=(2,1), legend=:topleft,size=(1200,800)))
+
+
+# Plot
+hf_order = plot(legend=:outerright,title=L"Fraction of largest cluster vs $p$",xlabel=L"p",ylabel=L"S_L",dpi=300);
+hf_prob = plot(legend=:outerright, title=L"Percolation probability vs $p$", xlabel=L"p", ylabel=L"R_L",dpi=300);
+hf_finite_size = plot(legend=:outerright, title=L"Finite size scaling of $p_c$", xlabel=L"L^{-4/3}", ylabel=L"\p_{c}^{L}",dpi=300); 
+# Detailed Plot
+colors = [:blue, :red, :green, :purple]  # Define colors for each L
+for (i, l) in enumerate(L)
+    avg_gcc, avg_susceptibility, perc_prob, p_values = simulation_data[l]
+    curve_fitted = curve_fit(erf_model, p_values, perc_prob, [0.5, 0.5, 0.1, 0.0])
+    est_pc = curve_fitted.param[2]
+    scatter!(hf_finite_size,[l].^(-4/3),[curve_fitted.param[2]], label="L = $l", markersize=5, color=colors[i],
+            xscale=:log10, yscale=:log10)
+    hline!(hf_finite_size,[0.5],linestyle=:dash, label="", color=:black)
+    plot!(hf_order, p_values, avg_gcc, label=L"L = %$l", color=colors[i])
+    vline!(hf_order, [est_pc], label="", color=colors[i], linestyle=:dash)
+    
+    scatter!(hf_prob, p_values, perc_prob, label=L"L = %$l", markersize=2, 
+            color=colors[i], markerstrokecolor=colors[i])
+    fit_perc_prob = erf_model(p_values, curve_fitted.param)
+    plot!(hf_prob, p_values, fit_perc_prob, label=L"Error Function Fit", color=colors[i])
+    vline!(hf_prob, [est_pc], label="", color=colors[i], linestyle=:dash)
+end
+
+ylims!(hf_finite_size, (10^(-0.3012), 10^(-0.3008)))
+h_all=plot(hf_order,hf_prob,hf_finite_size, layout=(3,1), legend=:topleft,size=(1400,1200),dpi=300)
+
+# Or you can save as PNG
+savefig(h_all, "Figure/bond_percolation_results.png")  # For PNG format
+
+# Save simulation data to a file
+using JLD2
+
+# Create data dictionary to save
+save_data = Dict(
+    "L" => L,
+    "realizations" => realizations,
+    "simulation_data" => simulation_data
+)
+
+
+@save "Data/bond_percolation_data.jld2" save_data

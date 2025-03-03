@@ -12,7 +12,9 @@ using BenchmarkTools
 using StatsBase  
 using Pkg
 using Combinatorics
+include("Union_Find.jl")
 
+# ----------------------------
 function index_to_edge_comb(index::Int, n::Int, m::Int)
     """
     Generate a hyperedge from an index given the number of nodes and hyperedge size.
@@ -55,56 +57,7 @@ end
 
 # index_to_edge_comb(2, 4, 2)  # Returns [0, 1, 2]
 
-# -----------------------------
-# Union-Find Data Structure
-# -----------------------------
-mutable struct UnionFind
-    parent::Vector{Int}
-    rank::Vector{Int}
-end
-
-# Constructor: initialize each node as its own parent; ranks start at zero.
-function UnionFind(n::Int)
-    parent = collect(1:n)    # Julia uses 1-indexing.
-    rank = zeros(Int, n)
-    return UnionFind(parent, rank)
-end
-
-# Find with path compression.
-function uf_find(uf::UnionFind, x::Int)
-    if uf.parent[x] != x
-        uf.parent[x] = uf_find(uf, uf.parent[x])
-    end
-    return uf.parent[x]
-end
-
-# Union by rank.
-function uf_union(uf::UnionFind, x::Int, y::Int)
-    root_x = uf_find(uf, x)
-    root_y = uf_find(uf, y)
-    if root_x != root_y
-        if uf.rank[root_x] > uf.rank[root_y]
-            uf.parent[root_y] = root_x
-        elseif uf.rank[root_x] < uf.rank[root_y]
-            uf.parent[root_x] = root_y
-        else
-            uf.parent[root_y] = root_x
-            uf.rank[root_x] += 1
-        end
-    end
-end
-
-# This newman shuffle is basically a Fisher-Yates shuffle （Shuffle）
-function neman_shuffle(N::Int)
-    edges = [(i,j) for i in 1:N for j in (i+1):N]
-    M = length(edges)
-    for i in 1:M
-        j = rand(i:M)
-        edges[i], edges[j] = edges[j], edges[i]
-    end
-    return edges
-end
-
+# ----------------------------
 # ------------------------------------------------------
 # Newman-Ziff ER Percolation Simulation Function
 # ------------------------------------------------------
@@ -120,77 +73,81 @@ Data is recorded in a window around `m = N/2` with relative half-width
 - GCC_fraction: the fraction of nodes in the giant connected component.
 """
 
-function susceptibility(sizes::Vector{Int})
-    if isempty(sizes)
+function compute_susceptibility(component_sizes::Vector{Int})
+    if isempty(component_sizes)
         return 0.0
     end
-    smax = maximum(sizes)
-    reduced = filter(s -> s != smax, sizes)
-    if isempty(reduced)
+    smax = maximum(component_sizes)
+    total = sum(component_sizes) - smax
+    if total == 0
         return 0.0
     end
-    # Define susceptibility as sum(s^2) / sum(s) for the reduced clusters.
-    return sum(x -> x^2, reduced) / sum(reduced)
+    sumsq = sum(s^2 for s in component_sizes if s != smax)
+    return sumsq / total
 end
 
+"""
+    newman_ziff_er_percolation_avg_degree(N; trials=1000, window_fraction=0.01, max_points=1000)
+
+Simulates bond percolation on an ER graph of `N` nodes over `trials` realizations.
+A recording window around `m = N/2` is used, with relative half-width given by `window_fraction`.
+Returns a tuple: (p_values, var_smax, chi_average, GCC_fraction)
+"""
 function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_fraction::Float64=0.01, max_points::Int=1000)
     # Compute window parameters.
     n = max(1, floor(Int, window_fraction * N))
     full_points = 2 * n
     num_window_points = min(full_points, max_points)
-    sampling_interval = full_points / num_window_points  # e.g. if full_points=2000 and max_points=1000, sampling_interval=2
+    sampling_interval = full_points / num_window_points  # Determines recording frequency.
 
-    # Define the range of p-values (edge densities) for the recording window.
     p_values = range((N / 2 - n) / N, stop=(N / 2 + n) / N, length=num_window_points)
 
-    # Allocate arrays to store the largest cluster sizes and susceptibility values.
+    # Preallocate result arrays.
     s_max_values = zeros(Float64, trials, num_window_points)
-    chi_values = zeros(Float64, trials, num_window_points)
-    N_limit::Int = N/2 + n
-    M::Int = N * (N - 1) / 2
+    chi_values   = zeros(Float64, trials, num_window_points)
 
-    # Loop over trials.
-    for t in 1:trials
-        uf = UnionFind(N)  
+    N_limit = div(N,2) + n  # Number of edges to add (approximately)
+    M = div(N * (N - 1), 2)
+
+    @showprogress for t in 1:trials
+        uf = UnionFind(N)
+        record_idx = 1      # Index in the sampling window.
+        sample_counter = 0  # Count edges processed in the recording window.
+
+       # Generate a random permutation of edges to add.
+        # adding_order = sample(1:M, N_limit, replace=false)
+        index_record = Set{Int}()
         
-        # Use the on‐the‐fly shuffled generator of edges.
-        # edges = shuffled_edges(N)
-        # edges = neman_shuffle(N)
-
-        record_idx = 1      # index in the sampling window (1 .. num_window_points)
-        sample_counter = 0  # counts how many edges in the window have been processed
-        
-        # index_track = Set{Int}()
-        adding_order = sample(1:M, N_limit, replace=false)
-        
-        for edge_count in eachindex(adding_order)
-
-            # index_random = rand(1:M)
-            index_random = adding_order[edge_count] 
-            # index_random
-            # while index_random in index_track  # Ensure uniqueness
-            #     index_random = rand(1:M)
-            # end
-            # push!(index_track, index_random)
-
-            (u,v) = index_to_edge_comb(index_random, N, 2)
-            uf_union(uf, u, v)
-            # Only record data if edge_count is within the recording window.
-            if  edge_count > (N / 2 - n)
+        for edge_count in 1:N_limit
+            # Get a random index that has not been used before.
+            adding_order = rand(1:M)
+            while adding_order in index_record
+                adding_order = rand(1:M)
+            end             
+            # Get edge endpoints.
+            (u, v) = index_to_edge_comb(adding_order, N, 2)
+            uf_union!(uf, u, v)
+            # (u, v) = index_to_edge_comb(adding_order[edge_count], N, 2)
+            # uf_union!(uf, u, v)
+            
+            if edge_count > (div(N,2) - n)
                 sample_counter += 1
-                # Check if it's time to record a sample.
                 if sample_counter ≥ sampling_interval * record_idx
-                    # Compute cluster sizes.
-                    component_sizes = zeros(Int, N)
+                    # Compute component sizes using the stored sizes in union-find.
+                    largest_cluster = 0
+                    comp_sizes = Int[]
                     for i in 1:N
-                        root = uf_find(uf, i)
-                        component_sizes[root] += 1
+                        if uf.parent[i] == i   # i is a root.
+                            size_val = uf.size[i]
+                            push!(comp_sizes, size_val)
+                            if size_val > largest_cluster
+                                largest_cluster = size_val
+                            end
+                        end
                     end
-                    component_sizes = filter(x -> x != 0, component_sizes)
-                    largest_cluster = maximum(component_sizes)
-                    chi = susceptibility(component_sizes)
 
-                    chi_values[t, record_idx] = chi
+                    # Compute susceptibility.
+                    chi_values[t, record_idx] = compute_susceptibility(comp_sizes)
                     s_max_values[t, record_idx] = largest_cluster
                     record_idx += 1
                 end
@@ -198,12 +155,12 @@ function newman_ziff_er_percolation_avg_degree(N::Int; trials::Int=1000, window_
         end
     end
 
-    # Compute averages over trials.
-    chi_average = vec(mean(chi_values, dims=1))
+    # Average over trials.
     s_max_average = vec(mean(s_max_values, dims=1))
-    GCC_fraction = s_max_average / N
+    chi_average   = vec(mean(chi_values, dims=1))
+    GCC_fraction  = s_max_average / N
 
-    # Compute the standard deviation of s_max.
+    # Compute standard deviation of s_max.
     s_max_sq_mean = vec(mean(s_max_values .^ 2, dims=1))
     var_smax = sqrt.(s_max_sq_mean .- s_max_average .^ 2)
 
@@ -213,15 +170,16 @@ end
 # -------------------------------------------------
 # Example: Simulation for Different System Sizes
 # -------------------------------------------------
-system_sizes = [600, 1000, 50000, 10000, 100000]
+system_sizes = [600, 1000, 5000, 10000, 100000]
 
+# system_sizes = [10000]  #
 # 14hours for N= 200000
 critical_points = Float64[]
 simulation_data = Dict{Int,Dict{String,Any}}()
 
-@showprogress for N in system_sizes
+for N in system_sizes
     start_time = time_ns()
-    p_vals, susceptibilities_1, susceptibilities_2, GCC_fraction = newman_ziff_er_percolation_avg_degree(N; trials=1000, window_fraction=0.2,max_points=100)
+    p_vals, susceptibilities_1, susceptibilities_2, GCC_fraction = newman_ziff_er_percolation_avg_degree(N; trials=500, window_fraction=0.2,max_points=100)
     simulation_data[N] = Dict(
         "p_vals" => p_vals,
         "susceptibilities_1" => susceptibilities_1,
@@ -240,18 +198,57 @@ simulation_data = Dict{Int,Dict{String,Any}}()
     println("Elapsed time: $elapsed_time seconds")
 end
 
+using JLD2
+@save "Data/simulation_data_ER.jld2" simulation_data
+
+# A bold test for system 10^6
+N = 10^6
+p_vals, susceptibilities_1, susceptibilities_2, GCC_fraction = newman_ziff_er_percolation_avg_degree(N; trials=500, window_fraction=0.2,max_points=100)
+simulation_data[N] = Dict(
+    "p_vals" => p_vals,
+    "susceptibilities_1" => susceptibilities_1,
+    "susceptibilities_2" => susceptibilities_2,
+    "GCC_fraction" => GCC_fraction
+)
+# Find the index where the derivative is maximal.
+idx = argmax(susceptibilities_2)
+p_c = p_vals[idx]
+println("Estimated percolation threshold (p_c) for ER graph with N=$N: $(round(p_c, digits = 4))")
+
+
+
+
+
+
+
+
+
 
 # -----------------------------
 # Plotting
 # -----------------------------
 # Plot critical points vs. 1/N.
-using Plots
-p_critical = Plots.plot(1.0 ./ system_sizes, critical_points,
+ using Plots
+p_critical = scatter(1 ./system_sizes, critical_points,
     marker=:circle, linestyle=:solid,
     label="Critical Points",
     xlabel="1/N", ylabel="p_c",
     title="Critical Points vs 1/N",xscale=:log10,yscale=:log10)
-display(p_critical)
+hline!(p_critical, [0.5], linestyle=:dash, label="Critical Point for ER", color=:black)
+# extraplot!(p_critical, [0.5], linestyle=:dash, label="Critical Point for ER", color=:black)
+f(x,β) = β[1] .* 1 ./x .^ (β[2]) .+ β[3]
+# Fit power law function using 1/N^(1/3) as x and critical points as y
+# Function to minimize: β[1]*x^β[2] + β[3]
+initial_guess = [0.1, 1/3, 0.5]
+result = optimize(β -> sum((critical_points[2:end] - f(system_sizes[2:end],β)).^2), initial_guess, BFGS())
+fit_params = Optim.minimizer(result)
+fit_params = round.(fit_params, digits=3)
+# Plot the fitted curve
+x_range = range(1000,10^6, length=10)
+plot!(p_critical,collect(1 ./x_range), f(x_range,fit_params), 
+    label="Fit: $(round(fit_params[1], digits=3))x^$(round(fit_params[2], digits=3)) + $(round(fit_params[3], digits=3))",
+    color=:red, linewidth=2)
+
 
 # Create four empty plots with titles, axis labels, and high resolution.
 p_sim1 = Plots.plot(title="Variance of the reduced cluster size", legend=:outerright, xlabel="p", ylabel="Susceptibilities 1", dpi=300);
@@ -387,6 +384,7 @@ beta_opt_4 = Optim.minimizer(result_4)
 println("Optimized β for p_sim4 ≈ $(round(beta_opt_4[2], digits=3))")
 
 # Add the optimized power law and guide line to p_sim4
+xx = range(10^(-2), stop=1, length=100)
 plot!(p_sim4,xx, power_law(xx, beta_opt_4), label="β ≈ $(round(beta_opt_4[2], digits=3))", lw=2,xscale=:log10,yscale=:log10)
 
 display(p_sim1)
