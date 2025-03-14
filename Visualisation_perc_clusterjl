@@ -1,0 +1,195 @@
+using Random, Statistics, StatsBase, Combinatorics
+using Latexify, LaTeXStrings
+# ---------------------
+# Union-Find with Size Tracking
+# ---------------------
+mutable struct UnionFind
+    parent::Vector{Int}
+    size::Vector{Int}
+end
+
+function UnionFind(n::Int)
+    return UnionFind(collect(1:n), ones(Int, n))
+end
+
+function uf_find(uf::UnionFind, x::Int)
+    while uf.parent[x] != x
+        uf.parent[x] = uf.parent[uf.parent[x]]  # Path halving.
+        x = uf.parent[x]
+    end
+    return x
+end
+
+function uf_union!(uf::UnionFind, x::Int, y::Int)
+    rx = uf_find(uf, x)
+    ry = uf_find(uf, y)
+    if rx == ry
+        return
+    end
+    if uf.size[rx] < uf.size[ry]
+        uf.parent[rx] = ry
+        uf.size[ry] += uf.size[rx]
+    else
+        uf.parent[ry] = rx
+        uf.size[rx] += uf.size[ry]
+    end
+end
+
+# ---------------------
+# Map an edge index to a unique pair (edge) of nodes.
+# ---------------------
+function index_to_edge_comb(index::Int, n::Int, m::Int)
+    total_combinations = binomial(n, m)
+    if index < 1 || index > total_combinations
+        throw(ArgumentError("Index $index out of range (must be between 1 and $total_combinations)"))
+    end
+    c = Int[]
+    j = -1
+    index -= 1  # convert to 0-based index
+    for s in 1:m
+        cs = j + 1
+        while index - binomial(n - 1 - cs, m - s) ≥ 0
+            index -= binomial(n - 1 - cs, m - s)
+            cs += 1
+        end
+        push!(c, cs)
+        j = cs
+    end
+    return Tuple(c .+ 1)  # convert back to 1-based indexing
+end
+
+# ---------------------
+# Sample a unique random edge index.
+# ---------------------
+function get_unique_edge!(used::Set{Int}, M::Int)
+    idx = rand(1:M)
+    while idx in used
+        idx = rand(1:M)
+    end
+    push!(used, idx)
+    return idx
+end
+
+# ---------------------
+# Compute susceptibility.
+# ---------------------
+function compute_susceptibility(comp_sizes::Vector{Int})
+    if isempty(comp_sizes)
+        return 0.0
+    end
+    smax = maximum(comp_sizes)
+    total = sum(comp_sizes) - smax
+    if total == 0
+        return 0.0
+    end
+    sumsq = sum(s^2 for s in comp_sizes if s != smax)
+    return sumsq / total
+end
+
+# ---------------------
+# Single-Trial Simulation for N=10^6
+# ---------------------
+"""
+run_single_trial(N, window_fraction, max_points)
+
+Runs one trial of the ER bond percolation simulation for N nodes.
+A limited number of edges (N_limit) are added, and data is recorded in a window
+around m = N/2. Returns a tuple: (p_values, s_max_trial, chi_trial)
+"""
+function run_single_trial(N::Int, windows_data::Union{UnitRange{Int64},Vector{Int}}; return_data::Bool=false)
+
+    # p values corresponding to the recording window.
+    p_values = windows_data./N
+    num_window_points = length(windows_data)
+    # maximum number of edges to add
+    N_limit = maximum(windows_data)
+
+    # Preallocate memory
+    s_max_trial = zeros(Float64, num_window_points)
+    chi_trial   = zeros(Float64, num_window_points)
+    component_sizes = Dict{Float64, Vector{Int}}()
+
+    uf = UnionFind(N)
+    record_idx = 1
+    sample_counter = 0
+    used_edges = Set{Int}()
+
+    for edge_count in 1:N_limit
+        edge_idx = get_unique_edge!(used_edges, M)
+        (u, v) = index_to_edge_comb(edge_idx, N, 2)
+        uf_union!(uf, u, v)
+
+        if edge_count in windows_data
+            comp_sizes = Int[]
+            largest_cluster = 0
+            for i in 1:N
+                if uf.parent[i] == i
+                    size_val = uf.size[i]
+                    push!(comp_sizes, size_val)
+                    largest_cluster = max(largest_cluster, size_val)
+                end
+            end
+            component_sizes[p_values[record_idx]] = comp_sizes
+            chi_trial[record_idx] = compute_susceptibility(comp_sizes)
+            s_max_trial[record_idx] = largest_cluster
+            record_idx += 1
+        end
+    end
+    if  return_data
+        return p_values, s_max_trial, chi_trial, component_sizes
+    else
+        return p_values, s_max_trial, chi_trial
+    end
+end
+
+N = 100000::Int
+M = binomial(N, 2)::Int
+custom_point = 0.5*N::Int
+data = round.(Int,range(custom_point-1,custom_point+1;length=2))
+
+(p_values, s_max_trial, chi_trial, component_sizes) = run_single_trial(N, data;return_data=true)    
+n_s_perc = component_sizes[maximum(p_values)]
+
+#
+using Plots
+using StatsBase
+# Count frequencies of each cluster size
+size_freq = countmap(n_s_perc)
+sizes = collect(keys(size_freq))
+freqs = collect(values(size_freq)./sum(sizes))
+
+power_law(x,β) = β[3].* x.^β[1] .* exp.(-x ./β[2])
+using LsqFit  # Add this at the top with other using statements
+curve_fitted = curve_fit(power_law, sizes, freqs, [-2,maximum(sizes),0.1])
+power_law_fitted(x) = power_law(x, curve_fitted.param)
+# Plot
+scatter(sizes, freqs, xscale=:log10, yscale=:log10, 
+    label="Simulaton N=$N at p = $(maximum(p_values))", xlabel="Cluster Size (s)", ylabel="Number of Clusters (n_s)", 
+    title="Cluster Size Distribution at p= $(round(maximum(p_values), digits=4))")
+using Printf
+
+plot!(1:maximum(sizes), power_law_fitted, 
+    label=L"f(x) = \beta_3 x^{\beta_1} e^{-x/\beta_2}")
+
+
+
+
+#logbin for powerlaw 
+d =component_sizes[maximum(p_values)]
+bin_edges = 10 .^(range(log10(minimum(d)),log10(maximum(d));length=20))
+hist = fit(Histogram,d, bin_edges)
+edge_ = hist.edges[1]
+size = 0.5*(edge_[1:end-1]+edge_[2:end])
+binwidth = diff(edge_)
+prob = hist.weights./sum(hist.weights)./binwidth
+index = findall(x -> x != 0.0, prob)
+
+# plot the degree distribution
+f(x,p) = p[1] .+ x.* p[2]
+curve_fitted = curve_fit(f, log10.(size[index]), log10.(prob[index]), [1.0, -3.0])
+h2 = Plots.scatter(size[index],prob[index],xscale=:log10,yscale=:log10,label="",xlabel="size",ylabel="Frequency")
+curve_fitted.param[2]
+f2(x) = 10^(curve_fitted.param[1]) .*x.^ curve_fitted.param[2]
+
+# plot
+Plots.plot!(h2,1:maximum(size),f2,linestyle=:dash,linewidth=2,label="Power Law Fit Slope=$(round.(curve_fitted.param[2],digits=3))",title = "N = $N at p = $(maximum(p_values))")

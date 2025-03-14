@@ -200,6 +200,10 @@ for (i, l) in enumerate(L)
 end
 
 ylims!(hf_finite_size, (10^(-0.3012), 10^(-0.3008)))
+display(hf_finite_size)
+display(hf_order)  
+dipslay(hf_prob)
+
 h_all=plot(hf_order,hf_prob,hf_finite_size, layout=(3,1), legend=:topleft,size=(1400,1200),dpi=300)
 
 # Or you can save as PNG
@@ -217,3 +221,72 @@ save_data = Dict(
 
 
 @save "Data/bond_percolation_data.jld2" save_data
+
+# Load data
+@load "Data/bond_percolation_data.jld2" save_data
+# Plot
+hf_order = plot(title=L"Fraction of largest cluster vs $p$",xlabel=L"p",ylabel=L"S_L",dpi=600,size=(1000,800),margin=10Plots.mm);
+hf_prob = plot(title=L"Percolation probability vs $p$", xlabel=L"p", ylabel=L"R_L",dpi=600,size=(1000,800),margin=10Plots.mm);
+hf_finite_size = plot(title=L"Finite size scaling of $p_c$", xlabel=L"L^{-4/3}", ylabel=L"\p_{c}^{L}",dpi=600,size=(1000,800),margin=10Plots.mm); 
+function erf_model(x, p)
+    # Model: A * [1 + erf((x-μ)/(σ√2))] + B
+    return p[1] * (1 .+ erf.((x .- p[2]) ./ (p[3]*sqrt(2)))) .+ p[4]
+end
+# Detailed Plot
+colors = [:blue, :red, :green, :purple]
+L = save_data["L"]
+simulation_data = save_data["simulation_data"]
+# Define colors for each L
+for (i, l) in enumerate(L)
+    avg_gcc, avg_susceptibility, perc_prob, p_values = simulation_data[l]
+    curve_fitted = curve_fit(erf_model, p_values, perc_prob, [0.5, 0.5, 0.1, 0.0])
+    est_pc = curve_fitted.param[2]
+    scatter!(hf_finite_size,[l].^(-4/3),[curve_fitted.param[2]], label="L = $l", markersize=5, color=colors[i],
+            xscale=:log10, yscale=:log10)
+    hline!(hf_finite_size,[0.5],linestyle=:dash, label="", color=:black)
+    plot!(hf_order, p_values, avg_gcc, label=L"L = %$l", color=colors[i])
+    vline!(hf_order, [est_pc], label="", color=colors[i], linestyle=:dash)
+    
+    scatter!(hf_prob, p_values, perc_prob, label=L"L = %$l", markersize=2, 
+            color=colors[i], markerstrokecolor=colors[i])
+    fit_perc_prob = erf_model(p_values, curve_fitted.param)
+    plot!(hf_prob, p_values, fit_perc_prob, label=L"Error Function Fit", color=colors[i])
+    vline!(hf_prob, [est_pc], label="", color=colors[i], linestyle=:dash)
+end
+
+ylims!(hf_finite_size, (10^(-0.3012), 10^(-0.3008)))
+display(hf_finite_size)
+display(hf_order)  
+display(hf_prob)
+mkdir("Figure/bond_percolation")
+savefig(hf_order, "Figure/bond_percolation/bond_percolation_order.png")  # For PNG format with high DPI
+savefig(hf_prob, "Figure/bond_percolation/bond_percolation_prob.png")  # For PNG format
+savefig(hf_finite_size, "Figure/bond_percolation/bond_percolation_finitesize.png")  # For PNG format
+
+y_data = Vector{Float64}()
+x_data = Float64.(copy(L))
+for (i,j) in enumerate(L)
+    avg_gcc, avg_susceptibility, perc_prob, p_values = simulation_data[j]
+    push!(y_data,avg_gcc[argmin(abs.(p_values.-1/2))])
+end
+
+f(x,β) = β[1].*x.^(β[2])
+curve_fitted = curve_fit(f,x_data,y_data,[1,-4/3])
+est_exp = curve_fitted.param[2]
+scatter(x_data,y_data,xscale=:log10,yscale=:log10,markersize = 5)
+plot!(x_data,f(x_data,curve_fitted.param),linestyle=:dash,xlabel = "L", ylabel = L"S_c",label = "Exponent $(round(curve_fitted.param[2],digits = 3))")
+savefig("Figure/bond_percolation/Sc(L).png")
+
+
+
+# S ~ (p-p_c)^A
+p_vals = simulation_data[L[end]][4]
+index_c = findall(x -> x > 1/2 && x < 0.51, p_vals)
+x_data = p_vals[index_c].-1/2
+y_data = simulation_data[L[end]][1][index_c]
+
+curve_fitted2 = curve_fit(f,x_data,y_data,[0.1,-5/36])
+curve_fitted2.param
+
+scatter(x_data,y_data,xscale=:log10,yscale=:log10)
+plot!(x_data,f(x_data,curve_fitted2.param))

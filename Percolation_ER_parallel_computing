@@ -1,6 +1,6 @@
 using Distributed
 if nprocs() == 1
-    addprocs(10)
+    addprocs(6)
 end
 
 @everywhere begin
@@ -13,7 +13,19 @@ end
         parent::Vector{Int}
         size::Vector{Int}
     end
+    using Random, Statistics, StatsBase, Combinatorics
 
+    # ---------------------
+    # Union-Find with Size Tracking
+    # ---------------------
+    mutable struct UnionFind
+        parent::Vector{Int}
+        size::Vector{Int}
+    end
+
+    function UnionFind(n::Int)
+        return UnionFind(collect(1:n), ones(Int, n))
+    end
     function UnionFind(n::Int)
         return UnionFind(collect(1:n), ones(Int, n))
     end
@@ -35,11 +47,107 @@ end
         if uf.size[rx] < uf.size[ry]
             uf.parent[rx] = ry
             uf.size[ry] += uf.size[rx]
+    function uf_find(uf::UnionFind, x::Int)
+        while uf.parent[x] != x
+            uf.parent[x] = uf.parent[uf.parent[x]]  # Path halving.
+            x = uf.parent[x]
+        end
+        return x
+    end
+
+    function uf_union!(uf::UnionFind, x::Int, y::Int)
+        rx = uf_find(uf, x)
+        ry = uf_find(uf, y)
+        if rx == ry
+            return
+        end
+        if uf.size[rx] < uf.size[ry]
+            uf.parent[rx] = ry
+            uf.size[ry] += uf.size[rx]
         else
+            uf.parent[ry] = rx
+            uf.size[rx] += uf.size[ry]
             uf.parent[ry] = rx
             uf.size[rx] += uf.size[ry]
         end
     end
+
+    # ---------------------
+    # Map an edge index to a unique pair (edge) of nodes.
+    # ---------------------
+    function index_to_edge_comb(index::Int, n::Int, m::Int)
+        total_combinations = binomial(n, m)
+        if index < 1 || index > total_combinations
+            throw(ArgumentError("Index $index out of range (must be between 1 and $total_combinations)"))
+        end
+        c = Int[]
+        j = -1
+        index -= 1  # convert to 0-based index
+        for s in 1:m
+            cs = j + 1
+            while index - binomial(n - 1 - cs, m - s) ≥ 0
+                index -= binomial(n - 1 - cs, m - s)
+                cs += 1
+            end
+            push!(c, cs)
+            j = cs
+        end
+        return Tuple(c .+ 1)  # convert back to 1-based indexing
+    end
+
+    # ---------------------
+    # Sample a unique random edge index.
+    # ---------------------
+    function get_unique_edge!(used::Set{Int}, M::Int)
+        idx = rand(1:M)
+        while idx in used
+            idx = rand(1:M)
+        end
+        push!(used, idx)
+        return idx
+    end
+
+    # ---------------------
+    # Compute susceptibility.
+    # ---------------------
+    function compute_susceptibility(comp_sizes::Vector{Int})
+        if isempty(comp_sizes)
+            return 0.0
+        end
+        smax = maximum(comp_sizes)
+        total = sum(comp_sizes) - smax
+        if total == 0
+            return 0.0
+        end
+        sumsq = sum(s^2 for s in comp_sizes if s != smax)
+        return sumsq / total
+    end
+
+    # ---------------------
+    # Single-Trial Simulation for N=10^6
+    # ---------------------
+    """
+    run_single_trial(N, window_fraction, max_points)
+
+    Runs one trial of the ER bond percolation simulation for N nodes.
+    A limited number of edges (N_limit) are added, and data is recorded in a window
+    around m = N/2. Returns a tuple: (p_values, s_max_trial, chi_trial)
+    """
+    function run_single_trial(N::Int, window_fraction::Float64, max_points::Int)
+        n = max(1, floor(Int, window_fraction * N))
+        full_points = 2 * n
+        num_window_points = min(full_points, max_points)
+        sampling_interval = full_points / num_window_points
+
+        # p values corresponding to the recording window.
+        p_values = range((div(N,2) - n) / N, stop=(div(N,2) + n) / N, length=num_window_points)
+
+        # Preallocate trial results.
+        s_max_trial = zeros(Float64, num_window_points)
+        chi_trial   = zeros(Float64, num_window_points)
+
+        N_limit = div(N,2) + n
+        M = div(N * (N - 1), 2)  # total possible edges
 
     # ---------------------
     # Map an edge index to a unique pair (edge) of nodes.
@@ -148,7 +256,40 @@ end
                     end
                 end
             end
+        uf = UnionFind(N)
+        record_idx = 1
+        sample_counter = 0
+        used_edges = Set{Int}()
+
+        for edge_count in 1:N_limit
+            edge_idx = get_unique_edge!(used_edges, M)
+            (u, v) = index_to_edge_comb(edge_idx, N, 2)
+            uf_union!(uf, u, v)
+
+            if edge_count > (div(N,2) - n)
+                sample_counter += 1
+                if sample_counter ≥ sampling_interval * record_idx
+                    comp_sizes = Int[]
+                    largest_cluster = 0
+                    for i in 1:N
+                        if uf.parent[i] == i
+                            size_val = uf.size[i]
+                            push!(comp_sizes, size_val)
+                            largest_cluster = max(largest_cluster, size_val)
+                        end
+                    end
+                    chi_trial[record_idx] = compute_susceptibility(comp_sizes)
+                    s_max_trial[record_idx] = largest_cluster
+                    record_idx += 1
+                    if record_idx > num_window_points
+                        break
+                    end
+                end
+            end
         end
+        return p_values, s_max_trial, chi_trial
+    end
+end  # End @everywhere block
         return p_values, s_max_trial, chi_trial
     end
 end  # End @everywhere block
@@ -190,6 +331,177 @@ end
 # Run the main function.
 system_sizes = Int.([1000,10000,50000, 10^5, 1.6*10^6])
 simulation_data_para = Dict{Int, Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}, Float64}}()
+# ---------------------
+# MAIN: Parallel Trials for N=10^6 over many independent trials.
+# ---------------------
+using ProgressMeter  # Must be at top level
+
+function main_largeN()
+    N = 10^6
+    num_trials = 100  # Adjust number of trials as desired.
+    window_fraction = 0.2
+    max_points = 100
+
+    # Wrap pmap with @showprogress to display progress.
+    trial_indices = 1:num_trials
+    results = @showprogress pmap(trial_indices) do trial
+        run_single_trial(N, window_fraction, max_points)
+    end
+
+    # Collect results.
+    p_vals = results[1][1]  # assume p_values are the same for all trials
+    num_points = length(p_vals)
+    s_max_mat = zeros(Float64, num_trials, num_points)
+    chi_mat = zeros(Float64, num_trials, num_points)
+    for (i, res) in enumerate(results)
+        s_max_mat[i, :] .= res[2]
+        chi_mat[i, :] .= res[3]
+    end
+    s_max_avg = vec(mean(s_max_mat, dims=1))
+    chi_avg = vec(mean(chi_mat, dims=1))
+    GCC_frac = s_max_avg ./ N
+
+    s_max_sq_mean = vec(mean(s_max_mat.^2, dims=1))
+    var_smax = sqrt.(s_max_sq_mean .- s_max_avg.^2)
+
+    idx = argmax(chi_avg)
+    p_c_est = p_vals[idx]
+    @info "For N=10^6, estimated percolation threshold p_c ≈ $(round(p_c_est, digits=4))"
+    return p_vals, var_smax, chi_avg, GCC_frac, p_c_est
+end
+
+# Run the main function.
+main_largeN()
+
+using JLD2
+# (p_vals, var_smax, chi_avg, GCC_frac, p_c_est) = ans
+# simulation_data_parallel = Dict("p_vals" => p_vals, "susceptibilities_1" => var_smax, "susceptibilities_2" => chi_avg, "GCC_fraction" => GCC_frac)  
+@save "Data/simulation_data_parallel.jld2" simulation_data_parallel
+@load "Data/simulation_data_ER.jld2"
+@load "Data/simulation_data_parallel.jld2"
+simulation_data[10^6] = simulation_data_parallel
+simulation_data
+
+
+# ---------------------
+# Plotting
+using Plots
+using Optim
+
+system_sizes = sort(collect(keys(simulation_data)))
+critical_points = Float64[]
+for N in system_sizes
+    data = simulation_data[N]
+    p_vals = data["p_vals"]
+    chi_avg = data["susceptibilities_2"]
+    p_c_est = p_vals[argmax(chi_avg)]
+    push!(critical_points, p_c_est)
+    @info "For N=$N, estimated percolation threshold p_c ≈ $(round(p_c_est, digits=4))"
+end
+
+p_critical = scatter(1 ./system_sizes, critical_points,
+    marker=:circle, linestyle=:solid,
+    label="Critical Points",
+    xlabel="1/N", ylabel="p_c",
+    title="Critical Points vs 1/N",xscale=:log10,yscale=:log10)
+hline!(p_critical, [0.5], linestyle=:dash, label="Critical Point for ER", color=:black)
+# extraplot!(p_critical, [0.5], linestyle=:dash, label="Critical Point for ER", color=:black)
+f(x,β) = β[1] .* (1 ./x .^ (β[2])) .+ β[3]
+# Fit power law function using 1/N^(1/3) as x and critical points as y
+# Function to minimize: β[1]*x^β[2] + β[3]
+initial_guess = [0.1, 1/3, 0.5]
+result = optimize(β -> sum((critical_points[2:end] - f(system_sizes[2:end],β)).^2), initial_guess, BFGS())
+fit_params = Optim.minimizer(result)
+fit_params = round.(fit_params, digits=3)
+# Plot the fitted curve
+x_range = range(1000,10^6, length=10)
+plot!(p_critical,collect(1 ./x_range), f(x_range,fit_params), 
+    label="Fit: $(round(fit_params[1], digits=3))x^$(round(fit_params[2], digits=3)) + $(round(fit_params[3], digits=3))",
+    color=:red, linewidth=2)
+
+savefig(p_critical, "Figure/critical_points_vs_N.png")
+
+    
+# Create four empty plots with titles, axis labels, and high resolution.
+p_sim1 = Plots.plot(title="Variance of the reduced cluster size", legend=:outerright, xlabel="p", ylabel="Susceptibilities 1", dpi=600,framestyle = :box);
+vline!(p_sim1, [0.5], linestyle=:dash, label="", lw=2);
+p_sim2 = Plots.plot(title="GCC Fraction scaled", xlabel="p", ylabel="GCC Fraction * N^(1/3)", dpi=600, legend=:outerright,framestyle = :box);
+vline!(p_sim2, [0.5], linestyle=:dash, label="",lw=2);
+p_sim3 = Plots.plot(title="Variance of the GCC", xlabel="p", ylabel="Susceptibilities 2", dpi=600, legend=:outerright,framestyle = :box);
+vline!(p_sim3, [0.5], linestyle=:dash, label="",lw=2);
+p_sim4 = Plots.plot(title="S vs (p-pc)", xlabel="p-pc", ylabel="GCC Fraction", dpi=600, legend=:outerright,lw=2,framestyle = :box);
+p_sim5 = Plots.plot(title="S_pc vs N", xlabel="N", ylabel="S_pc", dpi=600, legend=:outerright,lw=2,framestyle = :box);
+p_sim7 = Plots.plot(title="Collapse on master curve", xlabel = "(p-pc)*N^(1/3)" , ylabel = "S* N^(1/3)",framestyle = :box);
+
+for ii in eachindex(system_sizes)
+
+    N = system_sizes[ii]
+    data = simulation_data[N]
+    # Find the index of the value closest to 1/2
+    _, indx = findmin(abs.(data["p_vals"] .- 0.5))
+    S_pc = data["GCC_fraction"][indx]
+    Plots.scatter!(p_sim5, [N], [S_pc], label="N=$N", marker=:circle, markersize=5,xscale=:log10,yscale=:log10)
+
+    # Choose a color that varies with system size (e.g., varying the red channel).
+    color_val = RGB(ii / length(system_sizes), 0.0, 0.0)
+    
+    # Plot on p_sim1: empty markers with outlines and a connecting line.
+    Plots.plot!(p_sim1, data["p_vals"], data["susceptibilities_1"],
+        label = "N=$N",
+        linecolor = color_val, lw = 1,
+        marker = (:circle, 3, :white, stroke(0.2, color_val)))
+    # Find peak of susceptibilities and add vertical line
+
+    peak_idx = argmax(data["susceptibilities_1"])
+    peak_p = data["p_vals"][peak_idx]
+    vline!(p_sim1, [peak_p], linestyle=:dash, linecolor=color_val, legend=:false)
+    # Plot on p_sim2: same marker style.
+    Plots.plot!(p_sim2, data["p_vals"], data["GCC_fraction"]*N^(1/3),
+    label = "N=$N",
+    linecolor = color_val, lw = 1,
+    marker = (:circle, 3, :white, stroke(0.2, color_val)))
+
+    # Plot on p_sim3: same marker style.
+    Plots.plot!(p_sim3, data["p_vals"], data["susceptibilities_2"],
+        label = "N=$N",
+        linecolor = color_val, lw = 1,
+        marker = (:circle, 3, :white, stroke(0.2, color_val)))
+    
+    peak_idx = argmax(data["susceptibilities_2"])
+    peak_p = data["p_vals"][peak_idx]
+    vline!(p_sim3, [peak_p], linestyle=:dash, linecolor=color_val,label="")
+    
+    # Here we want to plot on p_sim4 using only the data for which (p_vals - 1/2) > 1/2.
+    # First, compute (p_vals - 1/2) and get indices where the condition holds.
+    idx = findall(x -> x .> 1/2, data["p_vals"])
+    
+    # Extract the filtered x and y data.
+    filtered_p_vals = data["p_vals"][idx] .- 1/2 
+    filtered_GCC = data["GCC_fraction"][idx]
+    
+    # Only plot if there is data to plot.
+    if !isempty(filtered_p_vals)
+        Plots.plot!(p_sim4, filtered_p_vals, filtered_GCC,
+            label = "N=$N",
+            xlims=(10^(-2),1), ylims=(10^(-2),1),  #
+            linecolor = color_val, lw = 1,
+            marker = (:circle, 3, :white, stroke(0.2, color_val)),
+            xaxis = :log10, yaxis = :log10)
+                # Plot on p_sim2: same marker style.
+        Plots.plot!(p_sim7, filtered_p_vals*N^(1/3), (filtered_GCC)*N^(1/3),
+        xlims=(0,1), ylims=(0,3),  # Add x-axis limits from 0 to 1
+        label = "N=$N",
+        linecolor = color_val, lw = 1,
+        marker = (:circle, 3, :white, stroke(0.2, color_val)))
+
+    else
+        @warn "No points passed the filter for system size N=$N."
+    end
+end
+
+# Prepare data points for fitting
+x_data = Float64[]
+y_data = Float64[]
 for N in system_sizes
     @info "Running simulation for N=$N"
     simulation_data_para[N] = main_largeN(N)
@@ -198,3 +510,71 @@ end
 using JLD2
 
 @save "Data/simulation_data_para.jld2" simulation_data_para
+    data = simulation_data[N]
+    _, indx = findmin(abs.(data["p_vals"] .- 0.5))
+    S_pc = data["GCC_fraction"][indx]
+    push!(x_data, N)
+    push!(y_data, S_pc)
+end
+
+using Optim
+using LinearAlgebra
+# Define the power law function
+power_law(x, β) = β[1].*x.^β[2]
+
+# Define the objective function (sum of squared residuals)
+function objective(β)
+    pred = power_law(x_data, β)
+    return sum((y_data - pred).^2)
+end
+
+# Perform optimization
+result = optimize(objective, [-0.1,-0.1], BFGS())
+# Get the optimized parameters
+beta_opt = Optim.minimizer(result)
+println("Optimized β ≈ $(round(beta_opt[2], digits=3))")
+
+# Add the optimized power law to the plot
+plot!(p_sim5, x_data, power_law(x_data, beta_opt), label="β ≈ $(round(beta_opt[2], digits=3))", lw=2)
+
+
+# Prepare data points for fitting p_sim4
+x_data_4 = Float64[]
+y_data_4 = Float64[]
+for N in system_sizes[end]
+    data = simulation_data[N]
+    idx = findall(x -> x .> 1/2, data["p_vals"])
+    if !isempty(idx)
+        filtered_p_vals = data["p_vals"][idx] .- 1/2
+        filtered_GCC = data["GCC_fraction"][idx]
+        append!(x_data_4, filtered_p_vals)
+        append!(y_data_4, filtered_GCC)
+    end
+end 
+
+# Perform optimization for p_sim4
+function objective_4(β)
+    pred = power_law(x_data_4, β)
+    return sum((y_data_4 - pred).^2)
+end
+
+result_4 = optimize(objective_4, [1.0, 1.0], BFGS())
+beta_opt_4 = Optim.minimizer(result_4)
+println("Optimized β for p_sim4 ≈ $(round(beta_opt_4[2], digits=3))")
+
+# Add the optimized power law and guide line to p_sim4
+xx = range(10^(-2), stop=1, length=100)
+plot!(p_sim4,xx, power_law(xx, beta_opt_4), label="β ≈ $(round(beta_opt_4[2], digits=3))", lw=2,xscale=:log10,yscale=:log10)
+
+display(p_sim1)
+display(p_sim2)
+display(p_sim3)
+display(p_sim4)
+display(p_sim5)
+display(p_sim7)
+savefig(p_sim1, "Figure/susceptibilities_1.png")
+savefig(p_sim2, "Figure/GCC_fraction_scaled.png")   
+savefig(p_sim3, "Figure/susceptibilities_2.png")
+savefig(p_sim4, "Figure/GCC_fraction.png")
+savefig(p_sim5, "Figure/S_pc_vs_N.png")
+savefig(p_sim7, "Figure/collapse_on_master_curve.png")
