@@ -328,6 +328,7 @@ function main_largeN(N::Int; max_points::Int=100,window_fraction::Float64=0.2,nu
     return p_vals, var_smax, chi_avg, GCC_frac, p_c_est
 end
 
+<<<<<<< HEAD
 # Run the main function.
 system_sizes = Int.([1000,10000,50000, 10^5, 1.6*10^6])
 simulation_data_para = Dict{Int, Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}, Float64}}()
@@ -379,10 +380,38 @@ using JLD2
 @save "Data/simulation_data_parallel.jld2" simulation_data_parallel
 @load "Data/simulation_data_ER.jld2"
 @load "Data/simulation_data_parallel.jld2"
+=======
+
+using JLD2
+@load "Data/simulation_data_ER.jld2"
+@load "Data/simulation_data_para.jld2"
+>>>>>>> aa0a54b (Modify Percolation_ER_parallel_computing)
 simulation_data[10^6] = simulation_data_parallel
 simulation_data
 
 
+<<<<<<< HEAD
+=======
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+>>>>>>> aa0a54b (Modify Percolation_ER_parallel_computing)
 # ---------------------
 # Plotting
 using Plots
