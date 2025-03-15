@@ -15,38 +15,10 @@ end
     end
     using Random, Statistics, StatsBase, Combinatorics
 
-    # ---------------------
-    # Union-Find with Size Tracking
-    # ---------------------
-    mutable struct UnionFind
-        parent::Vector{Int}
-        size::Vector{Int}
-    end
-
     function UnionFind(n::Int)
         return UnionFind(collect(1:n), ones(Int, n))
     end
-    function UnionFind(n::Int)
-        return UnionFind(collect(1:n), ones(Int, n))
-    end
-
-    function uf_find(uf::UnionFind, x::Int)
-        while uf.parent[x] != x
-            uf.parent[x] = uf.parent[uf.parent[x]]  # Path halving.
-            x = uf.parent[x]
-        end
-        return x
-    end
-
-    function uf_union!(uf::UnionFind, x::Int, y::Int)
-        rx = uf_find(uf, x)
-        ry = uf_find(uf, y)
-        if rx == ry
-            return
-        end
-        if uf.size[rx] < uf.size[ry]
-            uf.parent[rx] = ry
-            uf.size[ry] += uf.size[rx]
+    
     function uf_find(uf::UnionFind, x::Int)
         while uf.parent[x] != x
             uf.parent[x] = uf.parent[uf.parent[x]]  # Path halving.
@@ -149,113 +121,6 @@ end
         N_limit = div(N,2) + n
         M = div(N * (N - 1), 2)  # total possible edges
 
-    # ---------------------
-    # Map an edge index to a unique pair (edge) of nodes.
-    # ---------------------
-    function index_to_edge_comb(index::Int, n::Int, m::Int)
-        total_combinations = binomial(n, m)
-        if index < 1 || index > total_combinations
-            throw(ArgumentError("Index $index out of range (must be between 1 and $total_combinations)"))
-        end
-        c = Int[]
-        j = -1
-        index -= 1  # convert to 0-based index
-        for s in 1:m
-            cs = j + 1
-            while index - binomial(n - 1 - cs, m - s) ≥ 0
-                index -= binomial(n - 1 - cs, m - s)
-                cs += 1
-            end
-            push!(c, cs)
-            j = cs
-        end
-        return Tuple(c .+ 1)  # convert back to 1-based indexing
-    end
-
-    # ---------------------
-    # Sample a unique random edge index.
-    # ---------------------
-    function get_unique_edge!(used::Set{Int}, M::Int)
-        idx = rand(1:M)
-        while idx in used
-            idx = rand(1:M)
-        end
-        push!(used, idx)
-        return idx
-    end
-
-    # ---------------------
-    # Compute susceptibility.
-    # ---------------------
-    function compute_susceptibility(comp_sizes::Vector{Int})
-        if isempty(comp_sizes)
-            return 0.0
-        end
-        smax = maximum(comp_sizes)
-        total = sum(comp_sizes) - smax
-        if total == 0
-            return 0.0
-        end
-        sumsq = sum(s^2 for s in comp_sizes if s != smax)
-        return sumsq / total
-    end
-
-    # ---------------------
-    # Single-Trial Simulation for N=10^6
-    # ---------------------
-    """
-    run_single_trial(N, window_fraction, max_points)
-
-    Runs one trial of the ER bond percolation simulation for N nodes.
-    A limited number of edges (N_limit) are added, and data is recorded in a window
-    around m = N/2. Returns a tuple: (p_values, s_max_trial, chi_trial)
-    """
-    function run_single_trial(N::Int, window_fraction::Float64, max_points::Int)
-        n = max(1, floor(Int, window_fraction * N))
-        full_points = 2 * n
-        num_window_points = min(full_points, max_points)
-        sampling_interval = full_points / num_window_points
-
-        # p values corresponding to the recording window.
-        p_values = range((div(N,2) - n) / N, stop=(div(N,2) + n) / N, length=num_window_points)
-
-        # Preallocate trial results.
-        s_max_trial = zeros(Float64, num_window_points)
-        chi_trial   = zeros(Float64, num_window_points)
-
-        N_limit = div(N,2) + n
-        M = div(N * (N - 1), 2)  # total possible edges
-
-        uf = UnionFind(N)
-        record_idx = 1
-        sample_counter = 0
-        used_edges = Set{Int}()
-
-        for edge_count in 1:N_limit
-            edge_idx = get_unique_edge!(used_edges, M)
-            (u, v) = index_to_edge_comb(edge_idx, N, 2)
-            uf_union!(uf, u, v)
-
-            if edge_count > (div(N,2) - n)
-                sample_counter += 1
-                if sample_counter ≥ sampling_interval * record_idx
-                    comp_sizes = Int[]
-                    largest_cluster = 0
-                    for i in 1:N
-                        if uf.parent[i] == i
-                            size_val = uf.size[i]
-                            push!(comp_sizes, size_val)
-                            largest_cluster = max(largest_cluster, size_val)
-                        end
-                    end
-                    chi_trial[record_idx] = compute_susceptibility(comp_sizes)
-                    s_max_trial[record_idx] = largest_cluster
-                    record_idx += 1
-                    if record_idx > num_window_points
-                        break
-                    end
-                end
-            end
         uf = UnionFind(N)
         record_idx = 1
         sample_counter = 0
@@ -288,11 +153,8 @@ end
             end
         end
         return p_values, s_max_trial, chi_trial
-    end
-end  # End @everywhere block
-        return p_values, s_max_trial, chi_trial
-    end
-end  # End @everywhere block
+    end 
+end
 
 # ---------------------
 # MAIN: Parallel Trials for N=10^6 over many independent trials.
@@ -328,90 +190,17 @@ function main_largeN(N::Int; max_points::Int=100,window_fraction::Float64=0.2,nu
     return p_vals, var_smax, chi_avg, GCC_frac, p_c_est
 end
 
-<<<<<<< HEAD
 # Run the main function.
 system_sizes = Int.([1000,10000,50000, 10^5, 1.6*10^6])
 simulation_data_para = Dict{Int, Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}, Float64}}()
-# ---------------------
-# MAIN: Parallel Trials for N=10^6 over many independent trials.
-# ---------------------
-using ProgressMeter  # Must be at top level
-
-function main_largeN()
-    N = 10^6
-    num_trials = 100  # Adjust number of trials as desired.
-    window_fraction = 0.2
-    max_points = 100
-
-    # Wrap pmap with @showprogress to display progress.
-    trial_indices = 1:num_trials
-    results = @showprogress pmap(trial_indices) do trial
-        run_single_trial(N, window_fraction, max_points)
-    end
-
-    # Collect results.
-    p_vals = results[1][1]  # assume p_values are the same for all trials
-    num_points = length(p_vals)
-    s_max_mat = zeros(Float64, num_trials, num_points)
-    chi_mat = zeros(Float64, num_trials, num_points)
-    for (i, res) in enumerate(results)
-        s_max_mat[i, :] .= res[2]
-        chi_mat[i, :] .= res[3]
-    end
-    s_max_avg = vec(mean(s_max_mat, dims=1))
-    chi_avg = vec(mean(chi_mat, dims=1))
-    GCC_frac = s_max_avg ./ N
-
-    s_max_sq_mean = vec(mean(s_max_mat.^2, dims=1))
-    var_smax = sqrt.(s_max_sq_mean .- s_max_avg.^2)
-
-    idx = argmax(chi_avg)
-    p_c_est = p_vals[idx]
-    @info "For N=10^6, estimated percolation threshold p_c ≈ $(round(p_c_est, digits=4))"
-    return p_vals, var_smax, chi_avg, GCC_frac, p_c_est
-end
-
-# Run the main function.
-main_largeN()
 
 using JLD2
-# (p_vals, var_smax, chi_avg, GCC_frac, p_c_est) = ans
-# simulation_data_parallel = Dict("p_vals" => p_vals, "susceptibilities_1" => var_smax, "susceptibilities_2" => chi_avg, "GCC_fraction" => GCC_frac)  
-@save "Data/simulation_data_parallel.jld2" simulation_data_parallel
-@load "Data/simulation_data_ER.jld2"
-@load "Data/simulation_data_parallel.jld2"
-=======
-
-using JLD2
-@load "Data/simulation_data_ER.jld2"
-@load "Data/simulation_data_para.jld2"
->>>>>>> aa0a54b (Modify Percolation_ER_parallel_computing)
+@load "Data/simulation_data_ER.jld2" simulation_data
+a = @load "Data/simulation_data_parallel.jld2"
 simulation_data[10^6] = simulation_data_parallel
 simulation_data
 
 
-<<<<<<< HEAD
-=======
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
->>>>>>> aa0a54b (Modify Percolation_ER_parallel_computing)
 # ---------------------
 # Plotting
 using Plots
