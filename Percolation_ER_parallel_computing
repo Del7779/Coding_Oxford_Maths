@@ -1,6 +1,6 @@
 using Distributed
 if nprocs() == 1
-    addprocs(6)
+    addprocs(10)
 end
 
 @everywhere begin
@@ -167,7 +167,7 @@ end  # End @everywhere block
 # ---------------------
 using ProgressMeter  # Must be at top level
 
-function main_largeN(N::Int; max_points::Int=100,window_fraction::Float64=0.2,num_trials::Int=100)
+function main_parallel_trials(N::Int; max_points::Int=100,window_fraction::Float64=0.15,num_trials::Int=100)
     # Wrap pmap with @showprogress to display progress.
     trial_indices = 1:num_trials
     results = @showprogress pmap(trial_indices) do trial
@@ -192,7 +192,7 @@ function main_largeN(N::Int; max_points::Int=100,window_fraction::Float64=0.2,nu
 
     idx = argmax(chi_avg)
     p_c_est = p_vals[idx]
-    @info "Success! For N=10^6, estimated percolation threshold p_c ≈ $(round(p_c_est, digits=4))"
+    @info "Success! For N=$N, estimated percolation threshold p_c ≈ $(round(p_c_est, digits=4))"
     return p_vals, var_smax, chi_avg, GCC_frac, p_c_est
 end
 
@@ -201,8 +201,18 @@ system_sizes = Int.([1000,10000,50000, 10^5, 1.6*10^6])
 simulation_data_para = Dict{Int, Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}, Float64}}()
 for N in system_sizes
     @info "Running simulation for N=$N"
-    simulation_data_para[N] = main_largeN(N)
+    simulation_data_para[N] = main_parallel_trails(N)
 end
+
+# 1.6e6 1 days and 14hrs
+
+using JLD2
+
+@save "Data/simulation_data_para_office.jld2" simulation_data_para
+
+
+
+
 
 # ---------------------
 # Plotting
@@ -329,16 +339,6 @@ for N in system_sizes
     simulation_data_para[N] = main_largeN(N)
 end
 
-using JLD2
-
-@save "Data/simulation_data_para.jld2" simulation_data_para
-    data = simulation_data[N]
-    _, indx = findmin(abs.(data["p_vals"] .- 0.5))
-    S_pc = data["GCC_fraction"][indx]
-    push!(x_data, N)
-    push!(y_data, S_pc)
-end
-
 using Optim
 using LinearAlgebra
 # Define the power law function
@@ -400,71 +400,4 @@ savefig(p_sim3, "Figure/susceptibilities_2.png")
 savefig(p_sim4, "Figure/GCC_fraction.png")
 savefig(p_sim5, "Figure/S_pc_vs_N.png")
 savefig(p_sim7, "Figure/collapse_on_master_curve.png")
-    data = simulation_data[N]
-    _, indx = findmin(abs.(data["p_vals"] .- 0.5))
-    S_pc = data["GCC_fraction"][indx]
-    push!(x_data, N)
-    push!(y_data, S_pc)
-end
-
-using Optim
-using LinearAlgebra
-# Define the power law function
-power_law(x, β) = β[1].*x.^β[2]
-
-# Define the objective function (sum of squared residuals)
-function objective(β)
-    pred = power_law(x_data, β)
-    return sum((y_data - pred).^2)
-end
-
-# Perform optimization
-result = optimize(objective, [-0.1,-0.1], BFGS())
-# Get the optimized parameters
-beta_opt = Optim.minimizer(result)
-println("Optimized β ≈ $(round(beta_opt[2], digits=3))")
-
-# Add the optimized power law to the plot
-plot!(p_sim5, x_data, power_law(x_data, beta_opt), label="β ≈ $(round(beta_opt[2], digits=3))", lw=2)
-
-
-# Prepare data points for fitting p_sim4
-x_data_4 = Float64[]
-y_data_4 = Float64[]
-for N in system_sizes[end]
-    data = simulation_data[N]
-    idx = findall(x -> x .> 1/2, data["p_vals"])
-    if !isempty(idx)
-        filtered_p_vals = data["p_vals"][idx] .- 1/2
-        filtered_GCC = data["GCC_fraction"][idx]
-        append!(x_data_4, filtered_p_vals)
-        append!(y_data_4, filtered_GCC)
-    end
-end 
-
-# Perform optimization for p_sim4
-function objective_4(β)
-    pred = power_law(x_data_4, β)
-    return sum((y_data_4 - pred).^2)
-end
-
-result_4 = optimize(objective_4, [1.0, 1.0], BFGS())
-beta_opt_4 = Optim.minimizer(result_4)
-println("Optimized β for p_sim4 ≈ $(round(beta_opt_4[2], digits=3))")
-
-# Add the optimized power law and guide line to p_sim4
-xx = range(10^(-2), stop=1, length=100)
-plot!(p_sim4,xx, power_law(xx, beta_opt_4), label="β ≈ $(round(beta_opt_4[2], digits=3))", lw=2,xscale=:log10,yscale=:log10)
-
-display(p_sim1)
-display(p_sim2)
-display(p_sim3)
-display(p_sim4)
-display(p_sim5)
-display(p_sim7)
-savefig(p_sim1, "Figure/susceptibilities_1.png")
-savefig(p_sim2, "Figure/GCC_fraction_scaled.png")   
-savefig(p_sim3, "Figure/susceptibilities_2.png")
-savefig(p_sim4, "Figure/GCC_fraction.png")
-savefig(p_sim5, "Figure/S_pc_vs_N.png")
-savefig(p_sim7, "Figure/collapse_on_master_curve.png")
+   
