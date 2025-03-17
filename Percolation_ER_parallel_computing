@@ -1,6 +1,6 @@
 using Distributed
 if nprocs() == 1
-    addprocs(10)
+    addprocs(11)
 end
 
 @everywhere begin
@@ -167,7 +167,7 @@ end  # End @everywhere block
 # ---------------------
 using ProgressMeter  # Must be at top level
 
-function main_parallel_trials(N::Int; max_points::Int=100,window_fraction::Float64=0.15,num_trials::Int=100)
+function main_parallel_trials(N::Int; max_points::Int=100,window_fraction::Float64=0.15,num_trials::Int=150)
     # Wrap pmap with @showprogress to display progress.
     trial_indices = 1:num_trials
     results = @showprogress pmap(trial_indices) do trial
@@ -197,11 +197,12 @@ function main_parallel_trials(N::Int; max_points::Int=100,window_fraction::Float
 end
 
 # Run the main function.
-system_sizes = Int.([1000,10000,50000, 10^5, 1.6*10^6])
-simulation_data_para = Dict{Int, Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}, Float64}}()
+system_sizes = Int.([1000, 10000, 50000, 10^5, 1.6*10^6, 10^7])
+simulation_data_para = Dict{Int, Dict}()
 for N in system_sizes
     @info "Running simulation for N=$N"
-    simulation_data_para[N] = main_parallel_trails(N)
+    (p_vals, var_smax, chi_avg, GCC_frac, p_c_est) = main_parallel_trials(N)
+    simulation_data_para[N] = Dict("p_vals" => p_vals, "var_smax" => var_smax, "chi_avg" => chi_avg, "GCC_fraction" => GCC_frac, "p_c_est" => p_c_est)
 end
 
 # 1.6e6 1 days and 14hrs
@@ -209,17 +210,18 @@ end
 using JLD2
 
 @save "Data/simulation_data_para_office.jld2" simulation_data_para
+# @load "Data/simulation_data_ER.jld2" simulation_data
 
-
-
-
+# (p_vals, var_smax, chi_avg, GCC_frac, p_c_est) = simulation_data_para[1600000]
+# simulation_data[1600000]= Dict("p_vals" => p_vals, "susceptibilities_1" => var_smax, "susceptibilities_2" => chi_avg, "GCC_fraction" => GCC_frac)    
+# @save "Data/simulation_data_ER.jld2" simulation_data
 
 # ---------------------
 # Plotting
 using Plots
 using Optim
-using JDLD2
-@load "Data/simulation_data.jld2" simulation_data
+@load "Data/simulation_data_ER.jld2" simulation_data
+
 system_sizes = sort(collect(keys(simulation_data)))
 critical_points = Float64[]
 for N in system_sizes
@@ -331,33 +333,30 @@ for ii in eachindex(system_sizes)
     end
 end
 
-# Prepare data points for fitting
-x_data = Float64[]
-y_data = Float64[]
-for N in system_sizes
-    @info "Running simulation for N=$N"
-    simulation_data_para[N] = main_largeN(N)
-end
 
 using Optim
 using LinearAlgebra
+using LsqFit
 # Define the power law function
 power_law(x, β) = β[1].*x.^β[2]
+linear_law(x, β) = β[1].*x .+ β[2]
 
-# Define the objective function (sum of squared residuals)
-function objective(β)
-    pred = power_law(x_data, β)
-    return sum((y_data - pred).^2)
+# Prepare data points for fitting p_sim5
+x_data = Float64[]
+y_data = Float64[]
+for N in system_sizes
+    data = simulation_data[N]
+    idx = argmin(abs.(data["p_vals"] .- 1/2))
+    if !isempty(idx)
+        append!(x_data, N)
+        append!(y_data, data["GCC_fraction"][idx])
+    end
 end
-
-# Perform optimization
-result = optimize(objective, [-0.1,-0.1], BFGS())
-# Get the optimized parameters
-beta_opt = Optim.minimizer(result)
-println("Optimized β ≈ $(round(beta_opt[2], digits=3))")
+curve_fitted = curve_fit(linear_law, log10.(x_data), log10.(y_data), [1.0, -1/3])
+beta_opt = curve_fitted.param
 
 # Add the optimized power law to the plot
-plot!(p_sim5, x_data, power_law(x_data, beta_opt), label="β ≈ $(round(beta_opt[2], digits=3))", lw=2)
+plot!(p_sim5, x_data, power_law(x_data, [10^(beta_opt[2]),beta_opt[1]]), label="β ≈ $(round(beta_opt[1], digits=3))", lw=2)
 
 
 # Prepare data points for fitting p_sim4
@@ -386,7 +385,7 @@ println("Optimized β for p_sim4 ≈ $(round(beta_opt_4[2], digits=3))")
 
 # Add the optimized power law and guide line to p_sim4
 xx = range(10^(-2), stop=1, length=100)
-plot!(p_sim4,xx, power_law(xx, beta_opt_4), label="β ≈ $(round(beta_opt_4[2], digits=3))", lw=2,xscale=:log10,yscale=:log10)
+plot!(p_sim4, xx, power_law(xx, beta_opt_4), label="β ≈ $(round(beta_opt_4[2], digits=3))", lw=2,xscale=:log10,yscale=:log10)
 
 display(p_sim1)
 display(p_sim2)
