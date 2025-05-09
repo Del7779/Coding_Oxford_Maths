@@ -18,9 +18,12 @@ end
 @everywhere using .MySPP
 @everywhere using .Newman_Ziff
 
+C_loop = [1,3,6,10]
+k = Int(4)
+for C in C_loop
 N = 100000
-C = 3
-g = erdos_renyi(N, Int(4 * N / 2))
+g = erdos_renyi(N, Int(k * N / 2))
+
 
 N = nv(g)
 # build adj+eid once
@@ -33,18 +36,12 @@ st = SPPState(
     [Int[] for _ in 1:N],
     Vector{Int}(undef, N + 1),
     adj,
-    BitVector([false]),
+    falses(ne(g)),
     Vector{Int64}(),
 )
 
-
-
 # Profile a single run
 od_pairs = find_node_pairs_within_distance(g, C)
-
-
-pv, chi1, chi2 = run_single_trial_spp_newman(g,C,od_pairs,st)
-
 
 num_trials = 500
 # Wrap pmap with @showprogress to display progress.
@@ -71,9 +68,14 @@ chi_giant = (s_max_sq_mean ./ N^2 .- GCC_frac .^ 2) ./ GCC_frac
 
 idx = argmax(chi_small)
 p_c_est = p_vals[idx]
-@info "Success with $(nprocs()) workers! For N=$N, estimated percolation threshold p_c ≈ $(round(p_c_est, digits=4))"
+@info "Success with $(nprocs()) workers! For N=$N and C=$C, estimated percolation threshold p_c ≈ $(round(p_c_est, digits=4))"
+
+end
 
 
+using Plots
+plot(1 .- p_vals,chi_small)
+plot(1 .- p_vals, GCC_frac)
 
 
 

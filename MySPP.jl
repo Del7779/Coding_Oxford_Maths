@@ -82,10 +82,12 @@ struct SPPState
   
 function init_sppstate!(st, g::SimpleGraph)
     n = nv(g)    
-    resize!(st.dist, n);    # no fill! here
-    resize!(st.σ,    n);
-    resize!(st.queue, n+1);
-    resize!(st.removed,n)
+    # resize!(st.dist, n);    # no fill! here
+    # resize!(st.σ,    n);
+    # resize!(st.queue, n+1);
+    # resize!(st.removed,ne(g))
+
+    st.removed .= false
     empty!(st.seen)
     for p in st.parents
       empty!(p)
@@ -94,6 +96,7 @@ function init_sppstate!(st, g::SimpleGraph)
         st.dist[i] = typemax(Int)
         st.σ[i] = 0
     end
+
 end
   
 function sample_shortest_path!(o,d,C,st)::Union{Vector{Int},Nothing}
