@@ -6,37 +6,45 @@ using .Newman_Ziff
 
 # Prepare the od set
 
-function find_node_pairs_within_distance(g::Graph, C::Int)
-    pairs = Set{Tuple{Int, Int}}()
-    for u in 1:nv(g)
-        visited = Dict{Int, Int}()  # node => distance
-        queue = [(u, 0)]
+function find_node_pairs_within_distance(g::SimpleGraph, C::Int)
+    n = nv(g)
+    pairs = Vector{Tuple{Int,Int}}()
 
-        while !isempty(queue)
-            (current, dist) = popfirst!(queue)
-            if dist >= C
+    seen  = falses(n)                  # BitVector
+    dist  = Vector{Int}(undef, n)
+    queue = Vector{Int}(undef, n+1)
+
+    for u in 1:n
+        # reset for this source
+        fill!(seen, false)
+        # note: dist need only be assigned when seen[v] goes true
+
+        head, tail = 1, 1
+        queue[1]  = u
+        seen[u]   = true
+        dist[u]   = 0
+
+        while head ≤ tail
+            v = queue[head]; head += 1
+            d = dist[v]
+            if d == C
                 continue
             end
-            for v in neighbors(g, current)
-                if !haskey(visited, v)
-                    visited[v] = dist + 1
-                    push!(queue, (v, dist + 1))
-                    if u < v  # avoid duplicates like (2,1) if (1,2) is already added
-                        push!(pairs, (u, v))
+            @inbounds for w in neighbors(g, v)
+                if !seen[w]
+                    seen[w]      = true
+                    dist[w]      = d + 1
+                    tail        += 1
+                    queue[tail] = w
+                    if u < w
+                        push!(pairs, (u, w))
                     end
-                elseif dist + 1 <= visited[v]
-                    visited[v] = dist + 1
-                    pos = findfirst(x->x[1]==v,queue)
-                    queue[pos] = (v, dist+1)
-                    if u < v  # avoid duplicates like (2,1) if (1,2) is already added
-                        push!(pairs, (u, v))
-                    end    
                 end
             end
         end
     end
 
-    return collect(pairs)
+    return pairs
 end
 
 
@@ -313,10 +321,20 @@ N =100
 G = erdos_renyi(N, Int(4*N/2))
 C = [1,2,3,10, 20, 40, 80]
 times = Float64[]
+# one‐time state allocation
+st = SPPState(
+    Vector{Int}(undef, N),
+    Vector{Int}(undef, N),
+    [Int[] for _ in 1:N],
+    Vector{Int}(undef, N + 1),
+    adj,
+    falses(ne(g)),
+    Vector{Int64}(),
+)
 for c in C
     od_pairs = find_node_pairs_within_distance(G, c)
     
-    b = @benchmark run_single_spp_newman($G, $c, $od_pairs)
+    b = @benchmark run_single_trial_spp_newman($G, $c, $od_pairs,$st)
 
     t = minimum(b).time / 1e9  # Convert to seconds
     
